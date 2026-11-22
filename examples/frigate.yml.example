@@ -1,0 +1,29 @@
+# Example Frigate configuration for a Gen 1 Nest Cam Outdoor running nest-cam-local.
+# Replace YOUR_PASSWORD and 192.0.2.50 with your camera's onvif.conf password and static IP.
+
+go2rtc:
+  streams:
+    nest_outdoor:
+      - rtsp://admin:YOUR_PASSWORD@192.0.2.50:554/stream1
+
+cameras:
+  nest_outdoor:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/nest_outdoor
+          input_args: preset-rtsp-restream
+          roles:
+            - record
+            - detect
+    detect:
+      enabled: true
+      width: 1920
+      height: 1080
+      fps: 5
+    record:
+      enabled: true
+      retain:
+        days: 7
+        mode: motion
+    snapshots:
+      enabled: true

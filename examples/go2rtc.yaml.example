@@ -1,0 +1,10 @@
+# Example go2rtc configuration for a Gen 1 Nest Cam Outdoor running nest-cam-local.
+# Replace YOUR_PASSWORD and 192.0.2.50 with your camera's onvif.conf password and static IP.
+#
+# When /mnt/dropcam/audio.mode is set to "two-way" (or "speaker") and onvif.conf
+# credentials are configured, go2rtc automatically negotiates the ONVIF G.711 u-law
+# backchannel over the same /stream1 URL.
+
+streams:
+  nest_outdoor:
+    - rtsp://admin:YOUR_PASSWORD@192.0.2.50:554/stream1
