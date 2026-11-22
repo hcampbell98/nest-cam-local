@@ -9,7 +9,7 @@ set -euo pipefail
 #   ./dropbear/build.sh [ROOTFS_PATH]
 #
 # Optional environment variables:
-#   DROPBEAR_VER   Dropbear release version to download (default: 2025.87)
+#   DROPBEAR_VER   Dropbear release version to download (default: 2026.94)
 #   DROPBEAR_SRC   Path to an already-extracted Dropbear source directory
 #   CRTDIR         Host ARM toolchain CRT directory (default: /usr/arm-linux-gnueabi/lib)
 
@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 ROOTFS="${1:-${ROOTFS:-$REPO_ROOT/workspace/bak_extracted/86976456/rootfs}}"
-DROPBEAR_VER="${DROPBEAR_VER:-2025.88}"
+DROPBEAR_VER="${DROPBEAR_VER:-2026.94}"
 CRTDIR="${CRTDIR:-/usr/arm-linux-gnueabi/lib}"
 BUILD_DIR="$REPO_ROOT/workspace/dropbear-build"
 

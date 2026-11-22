@@ -11,7 +11,7 @@ set -euo pipefail
 #   - Expects Dropbear SSH to be running on the target camera.
 #     For a freshly rooted camera that only has Telnet, see README.md Step 5.
 #   - Uploads onvif.conf and audio.mode only if those local files exist in the
-#     repository root (both are gitignored).
+#     repository root.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

@@ -9,6 +9,9 @@ Dropcam-Rooter/
 nest_rtsp/nest_rtsp
 nest_onvif/nest_onvif
 dropbear/dropbear
+web/node_modules/
+web/dist/
+web/public/assets/
 
 # Camera captures, test frames, and local media
 color_test/

@@ -33,7 +33,7 @@ Other Ambarella A5s Dropcam/Nest cameras may require different sensor init flags
 
 ## Architecture Overview
 
-At boot, stock `/usr/bin/bootstrap.sh` checks for `/mnt/dropcam/ie_auto.sh` on the writable JFFS2 configuration partition (`mtd9`) and runs it as `root`.
+At boot, stock `/usr/bin/bootstrap.sh` checks for `/mnt/dropcam/ie_auto.sh` on the writable UBIFS configuration partition (`mtd9`, volume `adc`) and runs it as `root`.
 
 ```text
 /usr/bin/bootstrap.sh (stock RO rootfs on mtd6)
@@ -54,7 +54,33 @@ At boot, stock `/usr/bin/bootstrap.sh` checks for `/mnt/dropcam/ie_auto.sh` on t
               `- Runs nest_rtsp watchdog loop (RTSP :554, 1080p, ABR, night vision, motion)
 ```
 
-Everything you install lives in `/mnt/dropcam` (~8 MB JFFS2 flash partition). The stock read-only root filesystem (`mtd6`) is never modified.
+Everything you install lives in `/mnt/dropcam` (~8 MB UBIFS flash partition on `mtd9`). The stock read-only root filesystem (`mtd6`) is never modified.
+
+## Browser WebUSB Flasher (Recommended)
+
+Open the hosted flasher in desktop Chrome, Edge, or Brave:
+
+- **WebUSB Flasher:** [https://hcampbell98.github.io/nest-cam-local/](https://hcampbell98.github.io/nest-cam-local/)
+
+The static WebUSB app in `web/` runs 100% locally in your browser: it connects to the camera in DFU mode (`4255:0001`), lets you set Wi-Fi / ONVIF / root SSH credentials, extracts `v312-bld.bin` + `v312-hal-reloc.bin` client-side from `HD2-firmware.bin`, merges a custom `initrd.cpio.gz`, bootstraps a 1.2 KB ARMv6 EP1 Bulk-OUT loader (`web/firmware/fast_loader.c`) that uploads and CRC32-verifies all ~2.6 MiB in ~10 seconds total, and boots an autonomous UBIFS installer on the camera that preserves every factory calibration file without erasing `mtd9`.
+
+To run the WebUSB flasher locally (or build a static bundle yourself):
+
+```bash
+# 1. Stage compiled binaries + scripts + zImage + initrd_base.bin into web/public/assets/
+./scripts/prepare-web-assets.sh
+
+# 2. Install web dependencies and start the local dev server (or build web/dist/)
+cd web
+npm install
+npm run dev
+# Production static build:
+# npm run build
+```
+
+Open `http://localhost:5173` in Chrome, Edge, or Brave. It includes both **Simulation Mode** (no hardware required) and a **Read-only dry-run** option under Advanced Options to verify WebUSB, fast EP1 bulk upload, RAM kernel boot, and read-only `mtd9` UBIFS mount without writing to flash.
+
+If you prefer the manual CLI workflow instead, follow Steps 1 through 6 below.
 
 ## Prerequisites
 
@@ -91,7 +117,7 @@ cd nest-cam-local
 
 Use [weegeeday/Dropcam-Rooter](https://github.com/weegeeday/Dropcam-Rooter) to root the camera over USB without soldering. It boots a temporary Linux kernel into RAM via the Ambarella USB bootloader, dumps the writable config partition (`mtd9`), enables root access with your Wi-Fi credentials, and injects the `/mnt/dropcam/ie_auto.sh` boot hook.
 
-1. Clone and prepare `Dropcam-Rooter` (note that `Dropcam-Rooter/` is gitignored if you clone it inside this directory):
+1. Clone and prepare `Dropcam-Rooter`:
 
    ```bash
    git clone https://github.com/weegeeday/Dropcam-Rooter.git
@@ -131,7 +157,7 @@ Use [weegeeday/Dropcam-Rooter](https://github.com/weegeeday/Dropcam-Rooter) to r
 
    Confirm `hwver` reports `5` for a Gen 1 Nest Cam Outdoor.
 
-6. **Back up stock flash partitions** before making further changes. Return to your `nest-cam-local` directory (`cd ..`) and pull `mtd9` (config) and `mtd6` (active rootfs) into `backups/` (gitignored):
+6. **Back up stock flash partitions** before making further changes. Return to your `nest-cam-local` directory (`cd ..`) and pull `mtd9` (config) and `mtd6` (active rootfs) into `backups/`:
 
    ```bash
    mkdir -p backups
@@ -205,7 +231,7 @@ Then export `ROOTFS="$PWD/workspace/rootfs"`.
 
 ## Step 3: Cross-Compile the Binaries
 
-All compiled binaries are gitignored so the repository stays source-only. Build them on your Linux host with `ROOTFS` pointing to the directory from Step 2.
+Build all three ARMv6 binaries on your Linux host with `ROOTFS` pointing to the directory from Step 2.
 
 ### 1. Build `nest_rtsp`
 
@@ -241,7 +267,7 @@ Produces `dropbear/dropbear` (~130 KB stripped ARMv6 binary) and verifies that i
 
 ## Step 4: Create Your Device Config Files
 
-Device configuration files are listed in `.gitignore` so personal Wi-Fi keys and camera passwords are never committed. Templates live in `examples/`.
+Create your local camera configuration files from the templates in `examples/`.
 
 1. **ONVIF and RTSP credentials (`onvif.conf`)**
 

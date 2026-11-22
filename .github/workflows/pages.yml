@@ -1,0 +1,85 @@
+name: Deploy WebUSB Flasher to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download prebuilt ARMv6 binaries from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download prebuilt-v1 --pattern 'nest_rtsp' -D nest_rtsp
+          gh release download prebuilt-v1 --pattern 'nest_onvif' -D nest_onvif
+          gh release download prebuilt-v1 --pattern 'dropbear' -D dropbear
+          chmod +x nest_rtsp/nest_rtsp nest_onvif/nest_onvif dropbear/dropbear
+          sha256sum -c - <<'EOF'
+          cfd387c9ec67504cd05bd78b4a4556f2d28b979b485a73b512cadf42ec57d2f7  nest_rtsp/nest_rtsp
+          8a6f5e3feb8ae910854233bdccd8cd17b1442f494c630b55b92d6e1f5e4bfeb4  nest_onvif/nest_onvif
+          ea7080eb8ca7c75edd0e848781173f48c3b59b00b68e88bf53556394acaa298e  dropbear/dropbear
+          EOF
+
+      - name: Fetch upstream Ambarella RAM kernel and initrd
+        run: |
+          mkdir -p /tmp/gopro-usb-tools
+          git -C /tmp/gopro-usb-tools init -q
+          git -C /tmp/gopro-usb-tools remote add origin https://github.com/evilwombat/gopro-usb-tools.git
+          git -C /tmp/gopro-usb-tools fetch --depth 1 origin d1aa2bdf33710c79613a8cc461deebd88bac7ef9
+          git -C /tmp/gopro-usb-tools checkout -q FETCH_HEAD
+          sha256sum -c - <<'EOF'
+          51b106565603e7b63e3f023681623892ae023a865ce90000dcc53952bb7fe958  /tmp/gopro-usb-tools/zImage
+          00b68550840170d684f5a9511fdf7e461e79f7c1d5b08c677ca61ef6d75c3afc  /tmp/gopro-usb-tools/initrd.lzma
+          EOF
+
+      - name: Stage WebUSB flasher assets
+        run: ./scripts/prepare-web-assets.sh /tmp/gopro-usb-tools
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies, test, and build
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
