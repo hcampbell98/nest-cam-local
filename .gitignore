@@ -1,0 +1,34 @@
+# Extracted firmware, camera backups, and upstream rooting tools
+backups/
+workspace/
+Dropcam-Rooter/
+
+# Build artifacts & compiled ARM binaries
+*.o
+*.d
+nest_rtsp/nest_rtsp
+nest_onvif/nest_onvif
+dropbear/dropbear
+
+# Camera captures, test frames, and local media
+color_test/
+*.png
+*.jpg
+*.jpeg
+*.h264
+*.mp4
+*.yuv
+
+# Credentials, keys, and device-specific configs
+onvif.conf
+wpa_supplicant.conf
+audio.mode
+*.key
+*.pem
+*host_key*
+
+# Logs & temp files
+*.log
+*.tmp
+*.swp
+.DS_Store
