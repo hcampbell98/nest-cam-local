@@ -43,6 +43,10 @@ interface AppState {
   config: CameraConfig;
   useFastBulk: boolean;
   flashing: boolean;
+  finalizing: boolean;
+  finalizeRemainingSec: number;
+  finalizeTotalSec: number;
+  dfuDisconnected: boolean;
   flashDone: boolean;
   flashError: string | null;
   progressLabel: string;
@@ -70,7 +74,7 @@ const state: AppState = {
     onvifUser: 'admin',
     onvifPassword: '',
     rootPassword: '',
-    mirrorMode: 3,
+    mirrorMode: 0,
     audioMode: 'off',
     maxBitrateKbps: 2200,
     minBitrateKbps: 600,
@@ -79,6 +83,10 @@ const state: AppState = {
   },
   useFastBulk: true,
   flashing: false,
+  finalizing: false,
+  finalizeRemainingSec: 0,
+  finalizeTotalSec: 30,
+  dfuDisconnected: false,
   flashDone: false,
   flashError: null,
   progressLabel: 'Idle',
@@ -90,6 +98,14 @@ const state: AppState = {
 };
 
 let cleanupValidation: (() => void) | null = null;
+let finalizeTimerId: number | null = null;
+
+function clearFinalizeTimer(): void {
+  if (finalizeTimerId !== null) {
+    window.clearInterval(finalizeTimerId);
+    finalizeTimerId = null;
+  }
+}
 
 function esc(s: string): string {
   return s
@@ -136,95 +152,116 @@ function updateProgressDom(): void {
     label.textContent = `${state.progressLabel} (${pct}%)`;
   }
   if (stats && state.progressTotal > 0) {
-    const elapsedSec = Math.max(0.1, (performance.now() - state.flashStartMs) / 1000);
-    const kbps = state.progressSent / 1024 / elapsedSec;
-    const sentMb = (state.progressSent / (1024 * 1024)).toFixed(2);
-    const totalMb = (state.progressTotal / (1024 * 1024)).toFixed(2);
-    stats.textContent = `${sentMb} / ${totalMb} MiB | ${kbps.toFixed(0)} KiB/s`;
+    if (state.finalizing) {
+      stats.textContent = `${state.finalizeRemainingSec}s remaining`;
+    } else if (state.flashDone) {
+      stats.textContent = 'Ready';
+    } else {
+      const elapsedSec = Math.max(0.1, (performance.now() - state.flashStartMs) / 1000);
+      const kbps = state.progressSent / 1024 / elapsedSec;
+      const sentMb = (state.progressSent / (1024 * 1024)).toFixed(2);
+      const totalMb = (state.progressTotal / (1024 * 1024)).toFixed(2);
+      stats.textContent = `${sentMb} / ${totalMb} MiB | ${kbps.toFixed(0)} KiB/s`;
+    }
   }
 }
 
 function renderDfuDiagramSvg(): string {
   return `
-  <svg viewBox="0 0 420 212" width="420" height="212" role="img" aria-label="Exploded side profile of Nest Cam Outdoor showing the front bezel, lens and IR ring, main PCB with top-edge DFU button, bell-shaped rear shell, and rear USB cable">
+  <svg viewBox="0 0 460 216" width="460" height="216" role="img" aria-label="Exploded side profile of Nest Cam Outdoor showing the black front faceplate, clear inner cap with cyan gasket, lens and IR ring, main PCB with top-edge DFU button, bell-shaped rear shell, and rear USB cable">
     <!-- Exploded alignment ticks in the gaps -->
-    <line x1="60" y1="112" x2="78" y2="112" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.2" stroke-dasharray="3 3"/>
-    <line x1="157" y1="112" x2="181" y2="112" stroke="currentColor" stroke-opacity="0.24" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="33" y1="112" x2="45" y2="112" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.2" stroke-dasharray="2.5 2.5"/>
+    <line x1="83" y1="112" x2="101" y2="112" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="181" y1="112" x2="205" y2="112" stroke="currentColor" stroke-opacity="0.24" stroke-width="1.2" stroke-dasharray="3 3"/>
 
-    <!-- 1. Front bezel / clear cap with cyan weather gasket (side profile) -->
+    <!-- 1. Adhered black "nest" front faceplate (side profile) -->
     <g>
-      <path d="M38 56 C24 62 22 86 22 112 C22 138 24 162 38 168 L50 168 L50 56 Z" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.48" stroke-width="1.6"/>
-      <!-- Inner lens window -->
-      <rect x="24" y="96" width="12" height="32" rx="3" fill="currentColor" fill-opacity="0.14"/>
-      <!-- Signature cyan silicone gasket ring -->
-      <rect x="50" y="54" width="5" height="116" rx="2.5" fill="#38bdf8" fill-opacity="0.9"/>
+      <path d="M23 56 C17 60 16 86 16 112 C16 138 17 164 23 168 L28 168 L28 56 Z" fill="#111827" stroke="currentColor" stroke-opacity="0.65" stroke-width="1.5"/>
+      <!-- Status LED window near top -->
+      <circle cx="21" cy="74" r="2.2" fill="#3dd68c"/>
+      <!-- Lens aperture recess -->
+      <rect x="17" y="99" width="6" height="26" rx="2" fill="currentColor" fill-opacity="0.25"/>
     </g>
 
-    <!-- 2. Lens barrel + IR LED ring + Main PCB (side profile) -->
+    <!-- 2. Friction-fit clear inner cap with cyan weather gasket -->
+    <g>
+      <path d="M60 56 C48 62 47 86 47 112 C47 138 48 162 60 168 L72 168 L72 56 Z" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.48" stroke-width="1.6"/>
+      <!-- Inner lens window -->
+      <rect x="49" y="96" width="12" height="32" rx="3" fill="currentColor" fill-opacity="0.14"/>
+      <!-- Signature cyan silicone gasket ring -->
+      <rect x="72" y="54" width="5" height="116" rx="2.5" fill="#38bdf8" fill-opacity="0.9"/>
+      <!-- Subtle Wi-Fi antenna coax lead along bottom edge -->
+      <path d="M75 158 C88 162 118 164 162 158" fill="none" stroke="#f7b955" stroke-opacity="0.55" stroke-width="1.2" stroke-dasharray="2 2"/>
+    </g>
+
+    <!-- 3. Lens barrel + IR LED ring + Main PCB (side profile) -->
     <g>
       <!-- Protruding camera lens barrel -->
-      <rect x="82" y="97" width="14" height="30" rx="3" fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-opacity="0.68" stroke-width="1.5"/>
-      <rect x="96" y="90" width="16" height="44" rx="3" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.5"/>
+      <rect x="106" y="97" width="14" height="30" rx="3" fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-opacity="0.68" stroke-width="1.5"/>
+      <rect x="120" y="90" width="16" height="44" rx="3" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.5"/>
 
       <!-- IR LED carrier plate + top/bottom IR LED domes -->
-      <rect x="112" y="70" width="7" height="84" rx="2" fill="currentColor" fill-opacity="0.28" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.2"/>
+      <rect x="136" y="70" width="7" height="84" rx="2" fill="currentColor" fill-opacity="0.28" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.2"/>
       <!-- Upper IR LEDs -->
-      <path d="M112 74 L103 74 C99 74 99 82 103 82 L112 82 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.62" stroke-width="1.2"/>
-      <path d="M112 85 L104 85 C101 85 101 92 104 92 L112 92 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.1"/>
+      <path d="M136 74 L127 74 C123 74 123 82 127 82 L136 82 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.62" stroke-width="1.2"/>
+      <path d="M136 85 L128 85 C125 85 125 92 128 92 L136 92 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.1"/>
       <!-- Lower IR LEDs -->
-      <path d="M112 132 L104 132 C101 132 101 139 104 139 L112 139 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.1"/>
-      <path d="M112 142 L103 142 C99 142 99 150 103 150 L112 150 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.62" stroke-width="1.2"/>
+      <path d="M136 132 L128 132 C125 132 125 139 128 139 L136 139 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.1"/>
+      <path d="M136 142 L127 142 C123 142 123 150 127 150 L136 150 Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.62" stroke-width="1.2"/>
 
       <!-- Standoffs between IR board and Main PCB -->
-      <line x1="119" y1="82" x2="138" y2="82" stroke="currentColor" stroke-opacity="0.45" stroke-width="2"/>
-      <line x1="119" y1="142" x2="138" y2="142" stroke="currentColor" stroke-opacity="0.45" stroke-width="2"/>
+      <line x1="143" y1="82" x2="162" y2="82" stroke="currentColor" stroke-opacity="0.45" stroke-width="2"/>
+      <line x1="143" y1="142" x2="162" y2="142" stroke="currentColor" stroke-opacity="0.45" stroke-width="2"/>
 
       <!-- Circular Main PCB (side-edge slab) -->
-      <rect x="138" y="54" width="9" height="116" rx="3" fill="#1e6b4a" fill-opacity="0.58" stroke="#3dd68c" stroke-opacity="0.78" stroke-width="1.5"/>
+      <rect x="162" y="54" width="9" height="116" rx="3" fill="#1e6b4a" fill-opacity="0.58" stroke="#3dd68c" stroke-opacity="0.78" stroke-width="1.5"/>
       <!-- Rear shield / SoC block on back of PCB -->
-      <rect x="147" y="90" width="6" height="44" rx="1.5" fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
+      <rect x="171" y="90" width="6" height="44" rx="1.5" fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
 
       <!-- Highlighted DFU tactile button on top-front edge of Main PCB -->
-      <circle cx="135" cy="64" r="11" fill="#0d6efd" fill-opacity="0.24" stroke="#4da3ff" stroke-width="1.4" stroke-dasharray="2.5 2"/>
-      <rect x="131" y="59" width="7" height="10" rx="1.8" fill="#4da3ff" stroke="#ffffff" stroke-opacity="0.88" stroke-width="1"/>
+      <circle cx="159" cy="64" r="11" fill="#0d6efd" fill-opacity="0.24" stroke="#4da3ff" stroke-width="1.4" stroke-dasharray="2.5 2"/>
+      <rect x="155" y="59" width="7" height="10" rx="1.8" fill="#4da3ff" stroke="#ffffff" stroke-opacity="0.88" stroke-width="1"/>
     </g>
 
     <!-- Internal harness hint between PCB and rear shell -->
-    <path d="M153 106 C166 106 172 103 185 105" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5"/>
-    <path d="M153 118 C166 118 172 121 185 119" fill="none" stroke="#ff6b7a" stroke-opacity="0.55" stroke-width="1.4"/>
+    <path d="M177 106 C190 106 196 103 209 105" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5"/>
+    <path d="M177 118 C190 118 196 121 209 119" fill="none" stroke="#ff6b7a" stroke-opacity="0.55" stroke-width="1.4"/>
 
-    <!-- 3. Iconic bell-shaped Nest Cam Outdoor housing + rear collar -->
+    <!-- 4. Iconic bell-shaped Nest Cam Outdoor housing + rear collar -->
     <g>
       <!-- Tapered white bell body -->
-      <path d="M192 53 C232 55 268 68 282 89 L282 135 C268 156 232 169 192 171 A 7 59 0 0 1 192 53 Z" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-opacity="0.68" stroke-width="1.8" stroke-linejoin="round"/>
+      <path d="M216 53 C256 55 292 68 306 89 L306 135 C292 156 256 169 216 171 A 7 59 0 0 1 216 53 Z" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-opacity="0.68" stroke-width="1.8" stroke-linejoin="round"/>
       <!-- Hollow front opening rim -->
-      <ellipse cx="192" cy="112" rx="7" ry="59" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.48" stroke-width="1.5"/>
+      <ellipse cx="216" cy="112" rx="7" ry="59" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.48" stroke-width="1.5"/>
       <!-- Rear magnetic base collar -->
-      <path d="M282 89 L302 91 C306 92 308 100 308 112 C308 124 306 132 302 133 L282 135 Z" fill="currentColor" fill-opacity="0.11" stroke="currentColor" stroke-opacity="0.62" stroke-width="1.6"/>
+      <path d="M306 89 L326 91 C330 92 332 100 332 112 C332 124 330 132 326 133 L306 135 Z" fill="currentColor" fill-opacity="0.11" stroke="currentColor" stroke-opacity="0.62" stroke-width="1.6"/>
     </g>
 
-    <!-- 4. Rear USB cable & PC plug -->
+    <!-- 5. Rear USB cable & PC plug -->
     <g>
-      <path d="M308 112 C326 112 332 122 348 122 L362 122" fill="none" stroke="#3dd68c" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M332 112 C350 112 356 122 372 122 L386 122" fill="none" stroke="#3dd68c" stroke-width="2.6" stroke-linecap="round"/>
       <!-- USB plug body -->
-      <rect x="362" y="112" width="22" height="20" rx="3.5" fill="#3dd68c" fill-opacity="0.2" stroke="#3dd68c" stroke-width="1.6"/>
-      <rect x="384" y="116" width="10" height="12" rx="1.5" fill="none" stroke="#3dd68c" stroke-width="1.4"/>
+      <rect x="386" y="112" width="22" height="20" rx="3.5" fill="#3dd68c" fill-opacity="0.2" stroke="#3dd68c" stroke-width="1.6"/>
+      <rect x="408" y="116" width="10" height="12" rx="1.5" fill="none" stroke="#3dd68c" stroke-width="1.4"/>
     </g>
 
     <!-- Callout: DFU button -->
-    <path d="M143 56 L164 26 L178 26" fill="none" stroke="#4da3ff" stroke-width="1.6" stroke-dasharray="3 2.5"/>
-    <circle cx="143" cy="56" r="2.2" fill="#4da3ff"/>
-    <text x="184" y="23" fill="#4da3ff" font-size="11.5" font-weight="700">DFU button (top of PCB)</text>
-    <text x="184" y="37" fill="currentColor" fill-opacity="0.72" font-size="10.5">Hold while plugging in (2s)</text>
+    <path d="M167 56 L188 26 L202 26" fill="none" stroke="#4da3ff" stroke-width="1.6" stroke-dasharray="3 2.5"/>
+    <circle cx="167" cy="56" r="2.2" fill="#4da3ff"/>
+    <text x="208" y="23" fill="#4da3ff" font-size="11.5" font-weight="700">DFU button (top of PCB)</text>
+    <text x="208" y="37" fill="currentColor" fill-opacity="0.72" font-size="10.5">Hold while plugging in (2s)</text>
 
     <!-- Callout: PC USB -->
-    <text x="378" y="150" text-anchor="middle" fill="#3dd68c" font-size="10.5" font-weight="600">PC USB</text>
-    <text x="378" y="163" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">4255:0001</text>
+    <text x="402" y="150" text-anchor="middle" fill="#3dd68c" font-size="10.5" font-weight="600">PC USB</text>
+    <text x="402" y="163" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">4255:0001</text>
 
     <!-- Bottom part labels -->
-    <text x="38" y="194" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="10">Front cap</text>
-    <text x="120" y="194" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="10">IR + Main PCB</text>
-    <text x="244" y="194" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="10">Rear shell</text>
+    <text x="22" y="196" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">Black</text>
+    <text x="22" y="207" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">cover</text>
+    <text x="64" y="196" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">Clear</text>
+    <text x="64" y="207" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">cap</text>
+    <text x="142" y="196" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">IR + Main PCB</text>
+    <text x="268" y="196" text-anchor="middle" fill="currentColor" fill-opacity="0.62" font-size="9.5">Rear shell</text>
   </svg>`;
 }
 
@@ -236,9 +273,9 @@ function renderOsUsbHelp(): string {
       <details ${forceOpen}>
         <summary>Windows driver setup (one-time via Zadig)</summary>
         <ol class="checklist" style="margin-top:0.5rem">
-          <li>Open <a href="https://zadig.akeo.ie/" target="_blank" rel="noreferrer">Zadig</a> -> <strong>Options -> List All Devices</strong>.</li>
+          <li>With the camera plugged in in DFU mode, open <a href="https://zadig.akeo.ie/" target="_blank" rel="noreferrer">Zadig</a> -> <strong>Options -> List All Devices</strong>.</li>
           <li>Select the device with USB ID <code>4255 0001</code>.</li>
-          <li>Select <strong>WinUSB</strong>, click <strong>Install / Replace Driver</strong>, then close Zadig.</li>
+          <li>Select <strong>WinUSB</strong>, click <strong>Install / Replace Driver</strong>, then close Zadig and click Connect.</li>
         </ol>
       </details>`;
   }
@@ -259,8 +296,8 @@ function renderStep1(): string {
 
   return `
     <section class="card">
-      <h2>1. Connect Camera in DFU Mode</h2>
-      <p class="subtitle">Put your Gen 1 Nest Cam Outdoor into USB bootloader mode and connect it directly to your PC.</p>
+      <h2>1. Open Camera &amp; Enter DFU Mode</h2>
+      <p class="subtitle">Expose the PCB DFU button inside your Gen 1 Nest Cam Outdoor and connect USB directly to your PC.</p>
 
       ${
         !webUsbOk
@@ -279,8 +316,9 @@ function renderStep1(): string {
       <div class="grid-2">
         <div>
           <ol class="checklist">
-            <li><strong>Unplug</strong> the camera from power.</li>
-            <li><strong>Hold the PCB DFU button</strong> while plugging USB into your PC.</li>
+            <li><strong>Unplug the camera</strong>, then pry off the adhered <strong>black "nest" cover</strong> with a thin shim (gentle heat helps soften the adhesive).</li>
+            <li><strong>Pry out the clear inner cap</strong> (friction fit). Go slowly and watch the <strong>Wi-Fi antenna lines</strong> around the edge so they stay attached.</li>
+            <li><strong>Hold the top-edge PCB DFU button</strong> while plugging the camera's USB into your PC.</li>
             <li><strong>Release after 2 seconds.</strong> The front LED stays off (<code>4255:0001</code>).</li>
           </ol>
           ${renderOsUsbHelp()}
@@ -469,13 +507,18 @@ function renderStep2(): string {
 
         <div class="field">
           <label for="hd2-file">Bootstrap Firmware (<code>HD2-firmware.bin</code>)</label>
+          <span class="hint">
+            <a href="https://software.gopro.com/Firmware/HD2/HD2-firmware.bin" target="_blank" rel="noreferrer">Download GoPro Hero2 v312 (50 MB)</a>
+            (<a href="https://web.archive.org/web/20250828183228/http://software.gopro.com/Firmware/HD2/HD2-firmware.bin" target="_blank" rel="noreferrer">mirror</a>)
+            and drop it below. Used locally to extract the Ambarella A5s USB bootloader (verified by SHA-256).
+          </span>
           <div id="hd2-dropzone" class="dropzone ${state.bootstrap ? 'verified' : ''}">
             ${
               state.bootstrapBusy
                 ? '<strong>Verifying SHA-256...</strong>'
                 : state.bootstrap
                   ? `<strong style="color:var(--success)">Verified: ${esc(state.bootstrapName || 'HD2-firmware.bin')}</strong>`
-                  : `<div>Drop Hero2 v312 <code>HD2-firmware.bin</code> here, or choose file:</div>`
+                  : `<div>Drop <code>HD2-firmware.bin</code> here, or choose file:</div>`
             }
             <input type="file" id="hd2-file" accept=".bin,application/octet-stream" />
           </div>
@@ -529,7 +572,7 @@ function renderStep3(): string {
   return `
     <section class="card">
       <h2>3. Flashing Camera</h2>
-      <p class="subtitle">Keep USB connected until boot completes (~10 seconds).</p>
+      <p class="subtitle">Keep USB connected until the on-camera install finishes (~40 seconds total).</p>
 
       <div class="progress-wrap">
         <div class="progress-head">
@@ -553,13 +596,32 @@ function renderStep3(): string {
       }
 
       ${
+        state.finalizing
+          ? `<div id="finalize-banner" class="banner warn">
+              <strong id="finalize-title">Do not unplug USB yet (${state.finalizeRemainingSec}s)...</strong>
+              <span id="finalize-detail">
+                ${
+                  state.dfuDisconnected
+                    ? 'Camera exited DFU mode. '
+                    : ''
+                }${
+                  state.config.dryRun
+                    ? 'Verifying UBIFS read-only on mtd9 and rebooting without writing to flash.'
+                    : 'Verifying checksums, installing to /mnt/dropcam, and rebooting into local mode.'
+                }
+              </span>
+            </div>`
+          : ''
+      }
+
+      ${
         state.flashDone
           ? `<div class="banner ok">
-              <strong>${state.config.dryRun ? 'Dry-run booted!' : 'Flashing started!'}</strong>
+              <strong>${state.config.dryRun ? 'Dry-run complete! Safe to unplug USB.' : 'Flash complete! Safe to unplug USB.'}</strong>
               ${
                 state.config.dryRun
-                  ? 'Camera is verifying UBIFS read-only and rebooting without writing to flash.'
-                  : 'Camera is verifying checksums, installing to /mnt/dropcam, and rebooting (~25s).'
+                  ? 'Camera verified UBIFS read-only and rebooted without modifying flash.'
+                  : 'Camera has finished installing to /mnt/dropcam and rebooted into local mode. You can now unplug USB and reassemble the front covers.'
               }
             </div>`
           : ''
@@ -569,9 +631,14 @@ function renderStep3(): string {
 
       <div class="actions">
         ${
-          !state.flashing && state.flashError
+          !state.flashing && !state.finalizing && state.flashError
             ? `<button id="btn-retry-flash" class="btn primary">Retry</button>
                <button id="btn-back-step2" class="btn"><- Back</button>`
+            : ''
+        }
+        ${
+          state.finalizing
+            ? `<button id="btn-wait-finalize" class="btn primary" disabled>Waiting for camera (${state.finalizeRemainingSec}s)...</button>`
             : ''
         }
         ${
@@ -631,7 +698,7 @@ function renderStep4(): string {
     <section class="card">
       <h2>4. Ready to Connect</h2>
       <p class="subtitle">
-        Unplug USB and power the camera normally. After ~30s, find its IP on your router (<code>${esc(state.config.wifiSsid || 'Wi-Fi')}</code>).
+        Reassemble the clear cap and black cover, power the camera normally, and find its IP on your router (<code>${esc(state.config.wifiSsid || 'Wi-Fi')}</code>). Open <code>http://&lt;CAMERA_IP&gt;/snapshot.jpg</code> to verify video.
       </p>
 
       <div class="code-row">
@@ -718,8 +785,9 @@ function render(): void {
             const active = s.n === state.step;
             const disabled =
               state.flashing ||
+              state.finalizing ||
               (s.n > 1 && !state.deviceInfo) ||
-              (s.n === 3 && !state.flashing && !state.flashDone && !state.flashError) ||
+              (s.n === 3 && !state.flashing && !state.finalizing && !state.flashDone && !state.flashError) ||
               (s.n === 4 && !state.flashDone);
             return `
               <li>
@@ -837,12 +905,74 @@ function readConfigFromForm(form: HTMLFormElement): void {
   if (dryRunBox) state.config.dryRun = dryRunBox.checked;
 }
 
+function startFinalizeCountdown(isSim: boolean): void {
+  clearFinalizeTimer();
+  const totalSec = isSim ? 3 : 30;
+  state.finalizing = true;
+  state.finalizeTotalSec = totalSec;
+  state.finalizeRemainingSec = totalSec;
+  state.progressLabel = state.config.dryRun ? 'Verifying on camera' : 'Installing on camera';
+  state.progressTotal = totalSec;
+  state.progressSent = 0;
+  render();
+
+  const updateFinalizeDom = (): void => {
+    const elapsed = state.finalizeTotalSec - state.finalizeRemainingSec;
+    const pct = Math.min(100, Math.round((elapsed / Math.max(1, state.finalizeTotalSec)) * 100));
+    const bar = document.getElementById('flash-progress') as HTMLProgressElement | null;
+    const label = document.getElementById('flash-progress-label');
+    const stats = document.getElementById('flash-progress-stats');
+    const title = document.getElementById('finalize-title');
+    const waitBtn = document.getElementById('btn-wait-finalize');
+    if (bar) {
+      bar.max = state.finalizeTotalSec;
+      bar.value = elapsed;
+    }
+    if (label) {
+      label.textContent = `${state.progressLabel} (${pct}%)`;
+    }
+    if (stats) {
+      stats.textContent = `${state.finalizeRemainingSec}s remaining`;
+    }
+    if (title) {
+      title.textContent = `Do not unplug USB yet (${state.finalizeRemainingSec}s)...`;
+    }
+    if (waitBtn) {
+      waitBtn.textContent = `Waiting for camera (${state.finalizeRemainingSec}s)...`;
+    }
+  };
+
+  updateFinalizeDom();
+  finalizeTimerId = window.setInterval(() => {
+    state.finalizeRemainingSec = Math.max(0, state.finalizeRemainingSec - 1);
+    state.progressSent = state.finalizeTotalSec - state.finalizeRemainingSec;
+    if (state.finalizeRemainingSec <= 0) {
+      clearFinalizeTimer();
+      state.finalizing = false;
+      state.flashDone = true;
+      state.progressLabel = 'Complete';
+      state.progressSent = state.progressTotal;
+      appendLog(
+        state.config.dryRun
+          ? 'Dry-run window complete. Camera rebooted without modifying flash; safe to unplug USB.'
+          : 'Install window complete! Camera has rebooted into local mode. Safe to unplug USB.',
+      );
+      render();
+      return;
+    }
+    updateFinalizeDom();
+  }, 1000);
+}
+
 async function runFlash(): Promise<void> {
   if (!state.transport) return;
   const isSim = Boolean(state.deviceInfo?.simulated);
 
+  clearFinalizeTimer();
   state.step = 3;
   state.flashing = true;
+  state.finalizing = false;
+  state.dfuDisconnected = false;
   state.flashDone = false;
   state.flashError = null;
   state.logs = [];
@@ -851,6 +981,22 @@ async function runFlash(): Promise<void> {
   state.progressTotal = 1;
   state.flashStartMs = performance.now();
   render();
+
+  const usbApi =
+    !isSim && typeof navigator !== 'undefined' && 'usb' in navigator ? navigator.usb : null;
+  const onUsbDisconnect = (ev: USBConnectionEvent): void => {
+    if (ev.device.vendorId === AMBARELLA_VID && ev.device.productId === AMBARELLA_A5S_PID) {
+      if (!state.dfuDisconnected) {
+        state.dfuDisconnected = true;
+        appendLog('Camera exited DFU mode (4255:0001 disconnected). RAM installer running...');
+        const detail = document.getElementById('finalize-detail');
+        if (detail && !detail.textContent?.includes('exited DFU')) {
+          detail.textContent = `Camera exited DFU mode. ${detail.textContent ?? ''}`;
+        }
+      }
+    }
+  };
+  usbApi?.addEventListener('disconnect', onUsbDisconnect);
 
   try {
     appendLog(
@@ -913,15 +1059,17 @@ async function runFlash(): Promise<void> {
       },
     });
 
-    state.progressLabel = 'Complete';
-    state.progressSent = state.progressTotal;
-    updateProgressDom();
-    state.flashDone = true;
     await state.transport.close();
+    state.flashing = false;
+    startFinalizeCountdown(isSim);
+    setTimeout(() => {
+      usbApi?.removeEventListener('disconnect', onUsbDisconnect);
+    }, 5000);
+    return;
   } catch (err) {
+    usbApi?.removeEventListener('disconnect', onUsbDisconnect);
     state.flashError = err instanceof Error ? err.message : String(err);
     appendLog(`ERROR: ${state.flashError}`);
-  } finally {
     state.flashing = false;
     render();
   }
@@ -1017,8 +1165,11 @@ function wireEvents(): void {
     render();
   });
   document.getElementById('btn-flash-another')?.addEventListener('click', () => {
+    clearFinalizeTimer();
     state.transport = null;
     state.deviceInfo = null;
+    state.finalizing = false;
+    state.dfuDisconnected = false;
     state.flashDone = false;
     state.flashError = null;
     state.logs = [];
