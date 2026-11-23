@@ -50,8 +50,6 @@ for name in "${!ASSETS[@]}"; do
   cp "${ASSETS[$name]}" "$OUT_DIR/$name"
 done
 
-cp "$REPO_ROOT/assets/icon.svg" "$REPO_ROOT/web/public/icon.svg"
-
 # Convert initrd.lzma to initrd_base.bin (gzipped cpio with a .bin extension so
 # static hosts and Vite dev server never add Content-Encoding: gzip and
 # transparently decompress it during fetch()).

@@ -1,5 +1,3 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
-
 # nest-cam-local
 
 Reclaim a Gen 1 Nest Cam Outdoor from the cloud and turn it into a 100% local, privacy-respecting ONVIF Profile S and 1080p H.264 RTSP IP camera. Works offline with UniFi Protect, Frigate, Home Assistant, go2rtc, Blue Iris, or any standard ONVIF/RTSP NVR.

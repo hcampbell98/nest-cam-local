@@ -769,7 +769,6 @@ function render(): void {
     <main class="shell">
       <header class="topbar">
         <div class="brand">
-          <img src="./icon.svg" alt="" />
           <div>
             <h1>nest-cam-local Flasher</h1>
             <p>Gen 1 Nest Cam Outdoor (Local RTSP + ONVIF)</p>
