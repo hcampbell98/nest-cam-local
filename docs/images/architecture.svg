@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 340" width="880" height="340" role="img" aria-label="nest-cam-local boot and streaming architecture diagram">
+  <defs>
+    <style>
+      .bg { fill: #0d1117; stroke: #263244; stroke-width: 1.5; }
+      .box { fill: #161d29; stroke: #31425a; stroke-width: 1.4; }
+      .box-accent { fill: #12233a; stroke: #4da3ff; stroke-width: 1.6; }
+      .box-green { fill: #0f2920; stroke: #3dd68c; stroke-width: 1.6; }
+      .box-amber { fill: #2a2112; stroke: #f7b955; stroke-width: 1.5; }
+      .title { fill: #e8eef7; font: 700 14px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+      .sub { fill: #93a3ba; font: 500 11.5px ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; }
+      .body { fill: #c6d3e5; font: 500 11.5px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+      .tag-blue { fill: #4da3ff; font: 700 11px ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; }
+      .tag-green { fill: #3dd68c; font: 700 11px ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; }
+      .tag-amber { fill: #f7b955; font: 700 11px ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; }
+      .arrow { fill: none; stroke: #5f7696; stroke-width: 1.8; stroke-linecap: round; }
+      .arrow-accent { fill: none; stroke: #4da3ff; stroke-width: 2; stroke-linecap: round; }
+      .arrow-green { fill: none; stroke: #3dd68c; stroke-width: 2; stroke-linecap: round; }
+    </style>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#5f7696"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#4da3ff"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#3dd68c"/>
+    </marker>
+  </defs>
+
+  <!-- Canvas -->
+  <rect x="2" y="2" width="876" height="336" rx="16" class="bg"/>
+
+  <!-- Column 1: Stock RO Boot -->
+  <rect x="24" y="96" width="180" height="148" rx="12" class="box"/>
+  <text x="40" y="122" class="tag-amber">STOCK RO ROOTFS</text>
+  <text x="40" y="144" class="title">bootstrap.sh</text>
+  <text x="40" y="164" class="sub">mtd6 (untouched)</text>
+  <line x1="40" y1="178" x2="188" y2="178" stroke="#263244" stroke-width="1"/>
+  <text x="40" y="198" class="body">Checks writable UBIFS</text>
+  <text x="40" y="216" class="sub">/mnt/dropcam/</text>
+  <text x="40" y="232" class="sub">ie_auto.sh (mtd9)</text>
+
+  <!-- Arrow 1 -> 2 -->
+  <line x1="204" y1="170" x2="246" y2="170" class="arrow-accent" marker-end="url(#arr-blue)"/>
+
+  <!-- Column 2: ie_auto.sh Boot Hook -->
+  <rect x="252" y="28" width="244" height="284" rx="12" class="box-accent"/>
+  <text x="270" y="54" class="tag-blue">BOOT ISOLATION HOOK</text>
+  <text x="270" y="76" class="title">ie_auto.sh</text>
+  <text x="270" y="95" class="sub">/mnt/dropcam/ie_auto.sh</text>
+  <line x1="270" y1="108" x2="478" y2="108" stroke="#24426b" stroke-width="1"/>
+
+  <text x="270" y="130" class="body">• Feeds /dev/watchdog every 10s</text>
+  <text x="270" y="152" class="body">• Dropbear SSH (:22, Ed25519)</text>
+  <text x="270" y="174" class="body">• USB rescue shell (192.168.75.2)</text>
+  <text x="270" y="196" class="body">• Neutralizes photon &amp; connect OTA</text>
+  <text x="270" y="218" class="body">• Wraps wpa_supplicant (offline)</text>
+  <text x="270" y="240" class="body">• Runs udhcpc on wlan0</text>
+  <text x="270" y="262" class="body">• Turns off front RGB status LED</text>
+  <text x="270" y="292" class="tag-green">Launches local_start.sh -&gt;</text>
+
+  <!-- Arrows 2 -> 3 -->
+  <path d="M496 112 L542 112" class="arrow-green" marker-end="url(#arr-green)"/>
+  <path d="M496 228 L542 228" class="arrow-green" marker-end="url(#arr-green)"/>
+
+  <!-- Column 3 Top: nest_rtsp -->
+  <rect x="548" y="28" width="308" height="136" rx="12" class="box-green"/>
+  <text x="566" y="54" class="tag-green">VIDEO, NIGHT VISION &amp; AUDIO</text>
+  <text x="566" y="76" class="title">nest_rtsp</text>
+  <text x="566" y="95" class="sub">RTSP :554 /stream1 (TCP + UDP)</text>
+  <line x1="566" y1="108" x2="838" y2="108" stroke="#1b4d38" stroke-width="1"/>
+  <text x="566" y="128" class="body">1080p30 H.264 • AIMD ABR (600k to 2.2M)</text>
+  <text x="566" y="148" class="body">Auto IR-cut + PWM LEDs • Motion • PCMU</text>
+
+  <!-- Column 3 Bottom: nest_onvif -->
+  <rect x="548" y="176" width="308" height="136" rx="12" class="box-amber"/>
+  <text x="566" y="202" class="tag-amber">DISCOVERY, SNAPSHOTS &amp; EVENTS</text>
+  <text x="566" y="224" class="title">nest_onvif</text>
+  <text x="566" y="243" class="sub">HTTP :80 • WS-Discovery UDP :3702</text>
+  <line x1="566" y1="256" x2="838" y2="256" stroke="#4f3e20" stroke-width="1"/>
+  <text x="566" y="276" class="body">ONVIF Profile S • /snapshot.jpg</text>
+  <text x="566" y="296" class="body">PullPoint Motion • UniFi / Frigate / HA</text>
+</svg>

@@ -35,24 +35,7 @@ Other Ambarella A5s Dropcam/Nest cameras may require different sensor init flags
 
 At boot, stock `/usr/bin/bootstrap.sh` checks for `/mnt/dropcam/ie_auto.sh` on the writable UBIFS configuration partition (`mtd9`, volume `adc`) and runs it as `root`.
 
-```text
-/usr/bin/bootstrap.sh (stock RO rootfs on mtd6)
-  `-> /mnt/dropcam/ie_auto.sh
-        |- Restores /dev/null if missing
-        |- Feeds /dev/watchdog every 10s so the camera does not reboot
-        |- Starts /mnt/dropcam/dropbear -R (SSH on port 22, Ed25519 host key)
-        |- Brings up USB Ethernet rescue interface usb0 (192.168.75.2)
-        |- Binds telnetd to 192.168.75.2 only (port 23 closed on Wi-Fi)
-        |- Bind-mounts dummy sleep over /usr/bin/photon and /usr/bin/connect
-        |- Wraps /sbin/wpa_supplicant to strip -W so Wi-Fi associates offline
-        |- Runs udhcpc on wlan0 and pings gateway to announce LAN presence
-        `-> Starts /mnt/dropcam/local_start.sh
-              |- Turns off the front RGB status LED (lp5521)
-              |- Runs nest_onvif watchdog loop (HTTP :80, WS-Discovery UDP :3702)
-              |- Initializes Ambarella IAV driver (init.sh --ar0330)
-              |- Reads /mnt/dropcam/audio.mode (off|mic|speaker|two-way)
-              `- Runs nest_rtsp watchdog loop (RTSP :554, 1080p, ABR, night vision, motion)
-```
+![nest-cam-local boot and streaming architecture](docs/images/architecture.svg)
 
 Everything you install lives in `/mnt/dropcam` (~8 MB UBIFS flash partition on `mtd9`). The stock read-only root filesystem (`mtd6`) is never modified.
 
@@ -62,7 +45,17 @@ Open the hosted flasher in desktop Chrome, Edge, or Brave:
 
 - **WebUSB Flasher:** [https://hcampbell98.github.io/nest-cam-local/](https://hcampbell98.github.io/nest-cam-local/)
 
+[![nest-cam-local WebUSB Flasher](docs/images/web-flasher.png)](https://hcampbell98.github.io/nest-cam-local/)
+
 The static WebUSB app in `web/` runs 100% locally in your browser: it connects to the camera in DFU mode (`4255:0001`), lets you set Wi-Fi / ONVIF / root SSH credentials, extracts `v312-bld.bin` + `v312-hal-reloc.bin` client-side from `HD2-firmware.bin`, merges a custom `initrd.cpio.gz`, bootstraps a 1.2 KB ARMv6 EP1 Bulk-OUT loader (`web/firmware/fast_loader.c`) that uploads and CRC32-verifies all ~2.6 MiB in ~10 seconds total, and boots an autonomous UBIFS installer on the camera that preserves every factory calibration file without erasing `mtd9`.
+
+### Reaching the DFU Button
+
+Unplug the camera, gently pry off the adhered black `"nest"` front cover with a thin shim (light heat helps soften the adhesive), then carefully pry out the friction-fit clear plastic inner cap while keeping the Wi-Fi antenna leads around the edge attached. Hold the small tactile **DFU button** on the top edge of the circular green PCB while plugging USB into your PC, then release after 2 seconds.
+
+| Internal Layout (Clear Cap, IR Ring, PCB, Rear Shell) | DFU Tactile Button Location |
+| :---: | :---: |
+| ![Gen 1 Nest Cam Outdoor teardown internals](docs/images/teardown-internals.jpg) | ![DFU button location on top edge of circular PCB](docs/images/dfu-button.jpg) |
 
 To run the WebUSB flasher locally (or build a static bundle yourself):
 
@@ -107,7 +100,7 @@ sudo apt install -y \
 Clone this repository:
 
 ```bash
-git clone https://github.com/<your-username>/nest-cam-local.git
+git clone https://github.com/hcampbell98/nest-cam-local.git
 cd nest-cam-local
 ```
 

@@ -18,6 +18,8 @@ color_test/
 *.png
 *.jpg
 *.jpeg
+!docs/images/*.png
+!docs/images/*.jpg
 *.h264
 *.mp4
 *.yuv
