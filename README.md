@@ -2,6 +2,16 @@
 
 Reclaim a Gen 1 Nest Cam Outdoor from the cloud and turn it into a 100% local, privacy-respecting ONVIF Profile S and 1080p H.264 RTSP IP camera. Works offline with UniFi Protect, Frigate, Home Assistant, go2rtc, Blue Iris, or any standard ONVIF/RTSP NVR.
 
+## Quick Start (WebUSB Flasher)
+
+No soldering, Linux VM, or cross-compiler needed. Everything runs locally in your browser:
+
+1. Open the **[WebUSB Flasher](https://hcampbell98.github.io/nest-cam-local/)** in desktop Chrome, Edge, or Brave.
+2. Select `HD2-firmware.bin` (download link included in the flasher) and enter your Wi-Fi, ONVIF/RTSP, and root SSH credentials.
+3. Put the camera into DFU mode: gently pry off the front `"nest"` cover, remove the 4 small Phillips screws and pry out the friction-fit clear inner cap ([teardown photos](#reaching-the-dfu-button)), hold the small **DFU button** on the top edge of the PCB while plugging USB into your PC, then release after 2 seconds.
+4. Click **Connect** and **Flash** (~10 seconds), then wait ~30 seconds for the camera to reboot onto your Wi-Fi.
+5. Adopt it in UniFi Protect, Home Assistant, Frigate, or any ONVIF/RTSP NVR (port `80` ONVIF, `rtsp://<user>:<pass>@<CAMERA_IP>:554/stream1`). Future firmware updates can be uploaded locally at `http://<CAMERA_IP>/update`.
+
 ## What You Get
 
 - **1080p H.264 RTSP streaming** (`nest_rtsp`) at 30 fps over TCP/UDP on port `554` (`/stream1`) with RTSP Digest and Basic authentication.
@@ -49,7 +59,7 @@ The static WebUSB app in `web/` runs 100% locally in your browser: it connects t
 
 ### Reaching the DFU Button
 
-Unplug the camera, gently pry off the adhered black `"nest"` front cover with a thin shim (light heat helps soften the adhesive), then carefully pry out the friction-fit clear plastic inner cap while keeping the Wi-Fi antenna leads around the edge attached. Hold the small tactile **DFU button** on the top edge of the circular green PCB while plugging USB into your PC, then release after 2 seconds.
+Unplug the camera, gently pry off the adhered black `"nest"` front cover with a thin shim (light heat helps soften the adhesive), then remove the 4 small Phillips screws and carefully pry out the friction-fit clear plastic inner cap while keeping the Wi-Fi antenna leads around the edge attached. Hold the small tactile **DFU button** on the top edge of the circular green PCB while plugging USB into your PC, then release after 2 seconds.
 
 | Internal Layout (Clear Cap, IR Ring, PCB, Rear Shell) | DFU Tactile Button Location |
 | :---: | :---: |
@@ -450,7 +460,7 @@ The camera analyzes its own preview frames on a 48x32 cell grid, compensates for
 
 ## Updating a Flashed Camera (100% Local)
 
-Once flashed, you never need to open the camera or press the DFU button again for software updates. The camera stays completely offline—updates are uploaded directly from your browser over your local network:
+Once flashed, you never need to open the camera or press the DFU button again for software updates. The camera stays completely offline, and updates are uploaded directly from your browser over your local network:
 
 1. Download a `nest-cam-local-update-*.tar.gz` release bundle (or build one locally with `./scripts/build-update-bundle.sh`).
 2. Open **`http://<CAMERA_IP>/update`** in your browser and sign in with your `onvif.conf` username and password.

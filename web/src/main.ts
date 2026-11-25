@@ -183,7 +183,7 @@ function renderDfuDiagramSvg(): string {
       <rect x="17" y="99" width="6" height="26" rx="2" fill="currentColor" fill-opacity="0.25"/>
     </g>
 
-    <!-- 2. Friction-fit clear inner cap with cyan weather gasket -->
+    <!-- 2. Clear inner cap (4 small Phillips screws + friction fit) with cyan weather gasket -->
     <g>
       <path d="M60 56 C48 62 47 86 47 112 C47 138 48 162 60 168 L72 168 L72 56 Z" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.48" stroke-width="1.6"/>
       <!-- Inner lens window -->
@@ -317,7 +317,7 @@ function renderStep1(): string {
         <div>
           <ol class="checklist">
             <li><strong>Unplug the camera</strong>, then pry off the adhered <strong>black "nest" cover</strong> with a thin shim (gentle heat helps soften the adhesive).</li>
-            <li><strong>Pry out the clear inner cap</strong> (friction fit). Go slowly and watch the <strong>Wi-Fi antenna lines</strong> around the edge so they stay attached.</li>
+            <li><strong>Remove the clear inner cap</strong>: unscrew the <strong>4 small Phillips screws</strong>, then carefully pry out the friction-fit cap. Go slowly and watch the <strong>Wi-Fi antenna lines</strong> around the edge so they stay attached.</li>
             <li><strong>Hold the top-edge PCB DFU button</strong> while plugging the camera's USB into your PC.</li>
             <li><strong>Release after 2 seconds.</strong> The front LED stays off (<code>4255:0001</code>).</li>
           </ol>
