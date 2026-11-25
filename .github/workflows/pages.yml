@@ -26,13 +26,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download prebuilt-v1 --pattern 'nest_rtsp' -D nest_rtsp
-          gh release download prebuilt-v1 --pattern 'nest_onvif' -D nest_onvif
-          gh release download prebuilt-v1 --pattern 'dropbear' -D dropbear
+          gh release download v1.1.0-local --pattern 'nest_rtsp' -D nest_rtsp
+          gh release download v1.1.0-local --pattern 'nest_onvif' -D nest_onvif
+          gh release download v1.1.0-local --pattern 'dropbear' -D dropbear
           chmod +x nest_rtsp/nest_rtsp nest_onvif/nest_onvif dropbear/dropbear
           sha256sum -c - <<'EOF'
           cfd387c9ec67504cd05bd78b4a4556f2d28b979b485a73b512cadf42ec57d2f7  nest_rtsp/nest_rtsp
-          8a6f5e3feb8ae910854233bdccd8cd17b1442f494c630b55b92d6e1f5e4bfeb4  nest_onvif/nest_onvif
+          a8e84b9ea5c28bab1a837bddf956924863b8ab8088f6471f3e893466d2d739db  nest_onvif/nest_onvif
           ea7080eb8ca7c75edd0e848781173f48c3b59b00b68e88bf53556394acaa298e  dropbear/dropbear
           EOF
 

@@ -29,6 +29,9 @@
 extern int __xstat(int ver, const char *path, struct stat *buf);
 static inline int stat_compat(const char *path, struct stat *buf) { return __xstat(3, path, buf); }
 #define stat(p, b) stat_compat((p), (b))
+extern int __lxstat(int ver, const char *path, struct stat *buf);
+static inline int lstat_compat(const char *path, struct stat *buf) { return __lxstat(3, path, buf); }
+#define lstat(p, b) lstat_compat((p), (b))
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/ioctl.h>
@@ -44,6 +47,7 @@ static char g_auth_pass[128] = "";
 static int  g_http_port = 80;
 static int  g_rtsp_port = 554;
 static char g_iface[32] = "wlan0";
+static time_t g_start_time = 0;
 
 /* ---- Case-insensitive substring helper (avoids _GNU_SOURCE) ---- */
 static const char *ci_strstr(const char *h, const char *n) {
@@ -565,6 +569,27 @@ static void send_soap_unsupported(int fd, const char *action) {
     onvif_send_all(fd, xml, (size_t)xlen);
 }
 
+/* ---- Firmware Version Helper ---- */
+static void read_firmware_version(char *out, size_t max_len) {
+    if (max_len == 0) return;
+    strncpy(out, "1.0.0-local", max_len - 1);
+    out[max_len - 1] = '\0';
+    FILE *f = fopen("/mnt/dropcam/VERSION", "r");
+    if (!f) return;
+    char raw[64] = "";
+    if (fgets(raw, sizeof(raw), f)) {
+        size_t o = 0;
+        for (size_t i = 0; raw[i] && o + 1 < max_len; i++) {
+            unsigned char c = (unsigned char)raw[i];
+            if (c <= 0x20 || c >= 0x7f) continue;
+            if (c == '<' || c == '>' || c == '"' || c == '\'' || c == '&' || c == '\\') continue;
+            out[o++] = (char)c;
+        }
+        if (o > 0) out[o] = '\0';
+    }
+    fclose(f);
+}
+
 /* ---- Live JPEG Snapshot Endpoint (/snapshot.jpg) ---- */
 static void handle_snapshot(int fd) {
     struct stat st;
@@ -786,17 +811,18 @@ static bool handle_soap(int fd, const char *path, const char *headers, const cha
         send_soap_ok(fd, resp);
     }
     else if (strcasecmp(action, "GetDeviceInformation") == 0) {
-        char serial[16];
+        char serial[16], fw_ver[48];
         for (int i = 0; i < 12; i++) serial[i] = (char)toupper((unsigned char)ni->mac_hex[i]);
         serial[12] = '\0';
+        read_firmware_version(fw_ver, sizeof(fw_ver));
         snprintf(resp, sizeof(resp),
             "<tds:GetDeviceInformationResponse>"
             "<tds:Manufacturer>Nest</tds:Manufacturer>"
             "<tds:Model>NestCamOutdoor</tds:Model>"
-            "<tds:FirmwareVersion>1.0.0-local</tds:FirmwareVersion>"
+            "<tds:FirmwareVersion>%s</tds:FirmwareVersion>"
             "<tds:SerialNumber>%s</tds:SerialNumber>"
             "<tds:HardwareId>A5S-HW5</tds:HardwareId>"
-            "</tds:GetDeviceInformationResponse>", serial);
+            "</tds:GetDeviceInformationResponse>", fw_ver, serial);
         send_soap_ok(fd, resp);
     }
     else if (strcasecmp(action, "GetCapabilities") == 0) {
@@ -1180,6 +1206,428 @@ static bool handle_soap(int fd, const char *path, const char *headers, const cha
     return false;
 }
 
+/* ---- Lightweight Local Firmware Updater (/update) ---- */
+#define UPDATE_MAX_BYTES   (2u * 1024u * 1024u)
+#define UPDATE_ARCHIVE     "/tmp/nest_update.tar.gz"
+#define UPDATE_TMP_STAGE   "/tmp/nest_update_stage"
+#define UPDATE_FLASH_STAGE "/mnt/dropcam/.update_stage"
+
+typedef enum {
+    UPDATE_POST_NONE = 0,
+    UPDATE_POST_RESTART = 1,
+    UPDATE_POST_REBOOT = 2
+} update_post_action_t;
+
+static void send_http_response(int fd, int status, const char *reason,
+                               const char *ctype, const char *body) {
+    size_t blen = strlen(body);
+    char hdr[384];
+    int hlen = snprintf(hdr, sizeof(hdr),
+        "HTTP/1.1 %d %s\r\n"
+        "Content-Type: %s\r\n"
+        "Cache-Control: no-store\r\n"
+        "X-Content-Type-Options: nosniff\r\n"
+        "Content-Length: %u\r\n"
+        "Connection: close\r\n\r\n",
+        status, reason, ctype, (unsigned)blen);
+    onvif_send_all(fd, hdr, (size_t)hlen);
+    onvif_send_all(fd, body, blen);
+}
+
+static bool is_update_path(const char *path) {
+    return strcmp(path, "/update") == 0 || strcmp(path, "/update/") == 0 ||
+           strncmp(path, "/update?", 8) == 0 ||
+           strcmp(path, "/admin") == 0 || strcmp(path, "/admin/") == 0 ||
+           strncmp(path, "/admin?", 7) == 0;
+}
+
+static bool is_update_status_path(const char *path) {
+    return strcmp(path, "/update/status") == 0 ||
+           strncmp(path, "/update/status?", 15) == 0;
+}
+
+static void handle_update_status(int fd, const char *headers, const net_info_t *ni) {
+    if (!g_auth_pass[0]) {
+        send_http_response(fd, 403, "Forbidden", "application/json",
+            "{\"ok\":false,\"error\":\"Configure /mnt/dropcam/onvif.conf credentials before using web updates\"}");
+        return;
+    }
+    if (!verify_auth("GET", headers, "")) {
+        if (ci_strstr(headers, "\nX-Requested-With:")) {
+            send_http_response(fd, 401, "Unauthorized", "application/json",
+                "{\"ok\":false,\"error\":\"Invalid username or password\"}");
+        } else {
+            send_401(fd);
+        }
+        return;
+    }
+    char ver[48], json[256];
+    read_firmware_version(ver, sizeof(ver));
+    snprintf(json, sizeof(json),
+        "{\"ok\":true,\"version\":\"%s\",\"ip\":\"%s\",\"mac\":\"%s\",\"boot_id\":\"%d-%ld\"}",
+        ver, ni->ip, ni->mac_colon, (int)getpid(), (long)g_start_time);
+    send_http_response(fd, 200, "OK", "application/json", json);
+}
+
+static void handle_update_page(int fd) {
+    static const char html[] =
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>NestCamOutdoor Update</title>"
+        "<style>"
+        "body{font:14px/1.5 system-ui,sans-serif;max-width:460px;margin:32px auto;padding:0 16px;"
+        "background:#111;color:#eee}"
+        ".card{background:#1b1b1b;border:1px solid #2c2c2c;border-radius:10px;padding:20px}"
+        ".hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}"
+        "h1{font-size:18px;margin:0}.out{background:none;border:0;color:#888;font:12px inherit;cursor:pointer;padding:2px 6px}"
+        ".out:hover{color:#eee}dl{display:grid;grid-template-columns:auto 1fr;"
+        "gap:4px 12px;margin:0 0 16px;font-size:13px;color:#bbb}dt{color:#888}dd{margin:0;font-family:monospace}"
+        "label{display:block;font-size:12px;color:#aaa;margin:8px 0 4px}"
+        "input[type=text],input[type=password]{width:100%;box-sizing:border-box;padding:8px 10px;"
+        "border:1px solid #333;border-radius:6px;background:#121212;color:#eee;font:inherit}"
+        "input[type=file]{width:100%;margin:8px 0 12px;color:#ccc}"
+        ".row{display:flex;gap:8px;margin-top:12px}"
+        "button.btn{flex:1;padding:10px;border:0;border-radius:6px;background:#2563eb;color:#fff;"
+        "font:inherit;font-weight:600;cursor:pointer}button.sec{background:#2a2a2a;color:#ddd}"
+        "button:disabled{opacity:.5;cursor:default}"
+        "progress{width:100%;height:8px;margin-top:12px;display:none}"
+        ".msg{margin-top:12px;font-size:13px;white-space:pre-wrap;word-break:break-word}"
+        ".msg a{color:#60a5fa}.ok{color:#4ade80}.err{color:#f87171}.warn{color:#fbbf24}"
+        ".note{margin-top:14px;font-size:12px;color:#888}.hid{display:none}"
+        "</style></head><body><div class=\"card\">"
+        "<div class=\"hdr\"><h1>NestCamOutdoor Update</h1><button id=\"lo\" class=\"out hid\" type=\"button\">Sign out</button></div>"
+        "<form id=\"lf\">"
+        "<label for=\"u\">ONVIF Username</label>"
+        "<input id=\"u\" name=\"username\" type=\"text\" value=\"admin\" autocomplete=\"username\" required>"
+        "<label for=\"pw\">ONVIF Password</label>"
+        "<input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required>"
+        "<div class=\"row\"><button id=\"lb\" class=\"btn\" type=\"submit\">Sign In</button></div>"
+        "<div id=\"lm\" class=\"msg\"></div>"
+        "</form>"
+        "<div id=\"app\" class=\"hid\">"
+        "<dl><dt>Version</dt><dd id=\"v\">-</dd><dt>IP</dt><dd id=\"ip\">-</dd><dt>MAC</dt><dd id=\"mac\">-</dd></dl>"
+        "<input id=\"f\" type=\"file\" accept=\".tar.gz,.tgz\">"
+        "<div class=\"row\">"
+        "<button id=\"b\" class=\"btn\" type=\"button\">Upload &amp; Install</button>"
+        "<button id=\"c\" class=\"btn sec\" type=\"button\">Check for Updates</button>"
+        "</div>"
+        "<progress id=\"p\" max=\"100\" value=\"0\"></progress>"
+        "<div id=\"msg\" class=\"msg\"></div><div id=\"chk\" class=\"msg\"></div>"
+        "<p class=\"note\">Upload a <code>nest-cam-local-update-*.tar.gz</code> bundle. "
+        "Update checks run from your browser—the camera stays 100% offline. "
+        "Wi-Fi, ONVIF credentials, audio mode, and <code>camera.conf</code> are preserved.</p>"
+        "</div></div><script>"
+        "const $=id=>document.getElementById(id),lf=$('lf'),lb=$('lb'),lm=$('lm'),app=$('app'),lo=$('lo'),"
+        "u=$('u'),pw=$('pw'),v=$('v'),ip=$('ip'),mac=$('mac'),f=$('f'),b=$('b'),c=$('c'),p=$('p'),m=$('msg'),k=$('chk');"
+        "let auth='',bootId='';const SK='nest_auth';"
+        "const mkAuth=(usr,pass)=>{const by=new TextEncoder().encode(usr+':'+pass);let s='';by.forEach(x=>s+=String.fromCharCode(x));return 'Basic '+btoa(s);};"
+        "const fetchStatus=async(a,ms)=>{const ac=new AbortController(),t=setTimeout(()=>ac.abort(),ms||3000);"
+        "try{const r=await fetch('/update/status',{headers:{Authorization:a,'X-Requested-With':'web-ui'},cache:'no-store',signal:ac.signal});"
+        "let j={};try{j=await r.json();}catch(_){}return{status:r.status,json:j};}finally{clearTimeout(t);}};"
+        "const applyInfo=j=>{v.textContent=j.version||'-';ip.textContent=j.ip||'-';mac.textContent=j.mac||'-';bootId=j.boot_id||'';};"
+        "const showApp=(a,j)=>{auth=a;try{localStorage.setItem(SK,a);}catch(_){}applyInfo(j);lf.classList.add('hid');app.classList.remove('hid');lo.classList.remove('hid');lm.textContent='';};"
+        "lf.onsubmit=async e=>{e.preventDefault();lb.disabled=true;lm.className='msg';lm.textContent='Signing in...';"
+        "try{const a=mkAuth(u.value,pw.value),r=await fetchStatus(a,5000);"
+        "if(r.status===200&&r.json.ok){showApp(a,r.json);}"
+        "else{lm.className='msg err';lm.textContent=r.json.error||('Sign-in failed (HTTP '+r.status+')');}}"
+        "catch(_){lm.className='msg err';lm.textContent='Could not reach camera.';}finally{lb.disabled=false;}};"
+        "lo.onclick=()=>{auth='';bootId='';try{localStorage.removeItem(SK);}catch(_){}pw.value='';m.textContent='';k.textContent='';app.classList.add('hid');lo.classList.add('hid');lf.classList.remove('hid');};"
+        "(async()=>{let s='';try{s=localStorage.getItem(SK)||'';}catch(_){}if(!s)return;"
+        "lb.disabled=true;lm.className='msg';lm.textContent='Restoring session...';"
+        "try{const r=await fetchStatus(s,4000);if(r.status===200&&r.json.ok){showApp(s,r.json);return;}"
+        "if(r.status===401||r.status===403){try{localStorage.removeItem(SK);}catch(_){}}}catch(_){}"
+        "lm.textContent='';lb.disabled=false;})();"
+        "const norm=s=>s.replace(/^v/i,'').replace(/-local$/i,'');"
+        "const cmp=(a,b)=>{const pa=norm(a).split('.').map(Number),pb=norm(b).split('.').map(Number);"
+        "if(pa.some(isNaN)||pb.some(isNaN))return norm(a)===norm(b)?0:1;"
+        "for(let i=0;i<Math.max(pa.length,pb.length);i++){const d=(pa[i]||0)-(pb[i]||0);if(d)return d;}return 0;};"
+        "c.onclick=async()=>{c.disabled=true;k.className='msg';k.textContent='Checking GitHub Releases...';"
+        "try{const res=await fetch('https://api.github.com/repos/hcampbell98/nest-cam-local/releases/latest');"
+        "if(res.status===404){k.textContent='No published releases found on GitHub yet.';return;}"
+        "if(!res.ok)throw new Error('HTTP '+res.status);"
+        "const rel=await res.json(),tag=rel.tag_name||rel.name||'unknown';"
+        "const asset=(rel.assets||[]).find(a=>/^nest-cam-local-update-.*\\.tar\\.gz$/i.test(a.name));"
+        "const up=cmp(tag,v.textContent.trim())>0;k.textContent='';"
+        "const sp=document.createElement('span');sp.className=up?'ok':'';"
+        "sp.textContent=up?('Update available: '+tag+' '):('Up to date ('+tag+') ');k.appendChild(sp);"
+        "if(asset){const a=document.createElement('a');a.href=asset.browser_download_url;a.textContent='Download '+asset.name;a.rel='noopener';k.appendChild(a);k.appendChild(document.createTextNode(' · '));}"
+        "if(rel.html_url){const a=document.createElement('a');a.href=rel.html_url;a.target='_blank';a.rel='noopener';a.textContent='Release notes';k.appendChild(a);}"
+        "}catch(e){k.className='msg err';k.textContent='Check failed: '+e.message;}finally{c.disabled=false;}};"
+        "const pollBack=(prevId,act,ver)=>{const t0=Date.now(),label=act==='reboot'?'reboot':'restart';"
+        "let wentDown=false;"
+        "const tick=async()=>{const sec=Math.round((Date.now()-t0)/1000);"
+        "if(sec>90){b.disabled=false;c.disabled=false;m.className='msg warn';m.textContent='Timed out waiting for camera after 90s. Refresh once it is back online.';return;}"
+        "m.className='msg warn';m.textContent=(wentDown?'Camera is coming back up...':'Waiting for camera to '+label+'...')+' ('+sec+'s)';"
+        "try{const r=await fetchStatus(auth,2500);"
+        "if(r.status===200&&r.json.ok&&r.json.boot_id&&r.json.boot_id!==prevId){"
+        "applyInfo(r.json);b.disabled=false;c.disabled=false;p.style.display='none';f.value='';"
+        "m.className='msg ok';m.textContent='Camera is back online! Running '+(r.json.version||ver)+'.';return;}}"
+        "catch(_){wentDown=true;}"
+        "setTimeout(tick,2000);};setTimeout(tick,1500);};"
+        "b.onclick=()=>{const file=f.files[0];if(!file){m.className='msg err';m.textContent='Select a .tar.gz update bundle first.';return;}"
+        "const prevId=bootId;b.disabled=true;c.disabled=true;p.style.display='block';p.value=0;m.className='msg';m.textContent='Uploading...';"
+        "const x=new XMLHttpRequest();x.open('POST','/update',true);"
+        "x.setRequestHeader('Authorization',auth);x.setRequestHeader('X-Requested-With','web-ui');"
+        "x.upload.onprogress=ev=>{if(ev.lengthComputable)p.value=Math.round(ev.loaded*100/ev.total);};"
+        "x.onload=()=>{let r={};try{r=JSON.parse(x.responseText);}catch(_){}"
+        "if(x.status===200&&r.ok){m.className='msg warn';m.textContent='Installed '+(r.version||'update')+'. Waiting for camera...';pollBack(prevId,r.action,r.version);}"
+        "else{b.disabled=false;c.disabled=false;m.className='msg err';m.textContent='Update failed: '+(r.error||x.statusText||x.status);}};"
+        "x.onerror=()=>{b.disabled=false;c.disabled=false;m.className='msg err';m.textContent='Network error during upload.';};"
+        "x.send(file);};"
+        "</script></body></html>";
+    send_http_response(fd, 200, "OK", "text/html; charset=utf-8", html);
+}
+
+static bool is_valid_arm32_elf(const char *path) {
+    uint8_t hdr[20];
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    size_t n = fread(hdr, 1, sizeof(hdr), f);
+    fclose(f);
+    if (n < sizeof(hdr)) return false;
+    /* ELF magic, 32-bit, little-endian, EM_ARM (40) */
+    if (hdr[0] != 0x7f || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') return false;
+    if (hdr[4] != 1 || hdr[5] != 1) return false;
+    uint16_t mach = (uint16_t)hdr[18] | ((uint16_t)hdr[19] << 8);
+    return mach == 40;
+}
+
+static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
+    int in_fd = open(src, O_RDONLY);
+    if (in_fd < 0) return false;
+    int out_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, mode);
+    if (out_fd < 0) { close(in_fd); return false; }
+
+    uint8_t buf[4096];
+    bool ok = true;
+    for (;;) {
+        ssize_t r = read(in_fd, buf, sizeof(buf));
+        if (r < 0 && errno == EINTR) continue;
+        if (r < 0) { ok = false; break; }
+        if (r == 0) break;
+        ssize_t off = 0;
+        while (off < r) {
+            ssize_t w = write(out_fd, buf + off, (size_t)(r - off));
+            if (w < 0 && errno == EINTR) continue;
+            if (w <= 0) { ok = false; break; }
+            off += w;
+        }
+        if (!ok) break;
+    }
+    if (ok && fsync(out_fd) != 0) ok = false;
+    if (ok && chmod(dst, mode) != 0) ok = false;
+    close(out_fd);
+    close(in_fd);
+    return ok;
+}
+
+static void cleanup_update_files(void) {
+    unlink(UPDATE_ARCHIVE);
+    if (system("rm -rf " UPDATE_TMP_STAGE " " UPDATE_FLASH_STAGE) != 0) {
+        /* best effort cleanup */
+    }
+}
+
+static void handle_update_upload(int fd, const char *headers,
+                                 const char *initial_body, size_t initial_len,
+                                 size_t content_len, update_post_action_t *post_action) {
+    *post_action = UPDATE_POST_NONE;
+
+    if (!g_auth_pass[0]) {
+        send_http_response(fd, 403, "Forbidden", "application/json",
+            "{\"ok\":false,\"error\":\"Configure /mnt/dropcam/onvif.conf credentials before using web updates\"}");
+        return;
+    }
+    if (!verify_auth("POST", headers, "")) {
+        if (ci_strstr(headers, "\nX-Requested-With:")) {
+            send_http_response(fd, 401, "Unauthorized", "application/json",
+                "{\"ok\":false,\"error\":\"Invalid username or password\"}");
+        } else {
+            send_401(fd);
+        }
+        return;
+    }
+    if (content_len == 0) {
+        send_http_response(fd, 400, "Bad Request", "application/json",
+            "{\"ok\":false,\"error\":\"Empty upload body\"}");
+        return;
+    }
+    if (content_len > UPDATE_MAX_BYTES) {
+        send_http_response(fd, 413, "Payload Too Large", "application/json",
+            "{\"ok\":false,\"error\":\"Bundle exceeds 2 MiB limit\"}");
+        return;
+    }
+
+    if (ci_strstr(headers, "100-continue")) {
+        const char *c100 = "HTTP/1.1 100 Continue\r\n\r\n";
+        onvif_send_all(fd, c100, strlen(c100));
+    }
+
+    struct timeval tv = { 30, 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    cleanup_update_files();
+    FILE *af = fopen(UPDATE_ARCHIVE, "wb");
+    if (!af) {
+        send_http_response(fd, 500, "Internal Server Error", "application/json",
+            "{\"ok\":false,\"error\":\"Cannot open temporary upload file\"}");
+        return;
+    }
+
+    size_t written = 0;
+    bool io_ok = true;
+    if (initial_len > 0) {
+        size_t take = (initial_len > content_len) ? content_len : initial_len;
+        if (fwrite(initial_body, 1, take, af) != take) io_ok = false;
+        else written += take;
+    }
+    uint8_t chunk[4096];
+    while (io_ok && written < content_len) {
+        size_t want = content_len - written;
+        if (want > sizeof(chunk)) want = sizeof(chunk);
+        ssize_t n = recv(fd, chunk, want, 0);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { io_ok = false; break; }
+        if (fwrite(chunk, 1, (size_t)n, af) != (size_t)n) { io_ok = false; break; }
+        written += (size_t)n;
+    }
+    fclose(af);
+
+    if (!io_ok || written != content_len) {
+        cleanup_update_files();
+        send_http_response(fd, 400, "Bad Request", "application/json",
+            "{\"ok\":false,\"error\":\"Upload interrupted or incomplete\"}");
+        return;
+    }
+
+    if (system("mkdir -p " UPDATE_TMP_STAGE " && tar -xzf " UPDATE_ARCHIVE " -C " UPDATE_TMP_STAGE " >/dev/null 2>&1") != 0) {
+        cleanup_update_files();
+        send_http_response(fd, 400, "Bad Request", "application/json",
+            "{\"ok\":false,\"error\":\"Invalid .tar.gz archive\"}");
+        return;
+    }
+
+    struct stat st;
+    if (lstat(UPDATE_TMP_STAGE "/SHA256SUMS", &st) != 0 || !S_ISREG(st.st_mode)) {
+        cleanup_update_files();
+        send_http_response(fd, 400, "Bad Request", "application/json",
+            "{\"ok\":false,\"error\":\"Bundle is missing SHA256SUMS manifest\"}");
+        return;
+    }
+    if (system("cd " UPDATE_TMP_STAGE " && sha256sum -c SHA256SUMS >/dev/null 2>&1") != 0) {
+        cleanup_update_files();
+        send_http_response(fd, 400, "Bad Request", "application/json",
+            "{\"ok\":false,\"error\":\"SHA-256 verification failed\"}");
+        return;
+    }
+
+    static const struct {
+        const char *name;
+        mode_t mode;
+        bool is_elf;
+        bool is_core;
+        bool needs_reboot;
+    } allowed[] = {
+        { "nest_rtsp",      0755, true,  true,  false },
+        { "nest_onvif",     0755, true,  true,  false },
+        { "dropbear",       0755, true,  true,  true  },
+        { "ie_auto.sh",     0755, false, true,  true  },
+        { "local_start.sh", 0755, false, true,  true  },
+        { "VERSION",        0644, false, false, false },
+    };
+    const size_t n_allowed = sizeof(allowed) / sizeof(allowed[0]);
+    bool present[6] = { false, false, false, false, false, false };
+    int core_count = 0;
+    bool needs_reboot = false;
+
+    for (size_t i = 0; i < n_allowed; i++) {
+        char p[160];
+        snprintf(p, sizeof(p), UPDATE_TMP_STAGE "/%s", allowed[i].name);
+        if (lstat(p, &st) != 0) continue;
+        if (!S_ISREG(st.st_mode) || st.st_size <= 0) {
+            cleanup_update_files();
+            send_http_response(fd, 400, "Bad Request", "application/json",
+                "{\"ok\":false,\"error\":\"Bundle contains invalid or empty file entry\"}");
+            return;
+        }
+        if (allowed[i].is_elf && !is_valid_arm32_elf(p)) {
+            cleanup_update_files();
+            send_http_response(fd, 400, "Bad Request", "application/json",
+                "{\"ok\":false,\"error\":\"Binary failed ARM32 ELF header check\"}");
+            return;
+        }
+        present[i] = true;
+        if (allowed[i].is_core) core_count++;
+        if (allowed[i].needs_reboot) needs_reboot = true;
+    }
+
+    if (core_count == 0) {
+        cleanup_update_files();
+        send_http_response(fd, 400, "Bad Request", "application/json",
+            "{\"ok\":false,\"error\":\"Bundle contains no recognized firmware files\"}");
+        return;
+    }
+
+    if (mkdir(UPDATE_FLASH_STAGE, 0755) != 0 && errno != EEXIST) {
+        cleanup_update_files();
+        send_http_response(fd, 500, "Internal Server Error", "application/json",
+            "{\"ok\":false,\"error\":\"Failed to create flash staging directory\"}");
+        return;
+    }
+
+    for (size_t i = 0; i < n_allowed; i++) {
+        if (!present[i]) continue;
+        char src[160], dst[160];
+        snprintf(src, sizeof(src), UPDATE_TMP_STAGE "/%s", allowed[i].name);
+        snprintf(dst, sizeof(dst), UPDATE_FLASH_STAGE "/%s", allowed[i].name);
+        if (!copy_file_mode(src, dst, allowed[i].mode)) {
+            cleanup_update_files();
+            send_http_response(fd, 500, "Internal Server Error", "application/json",
+                "{\"ok\":false,\"error\":\"Failed staging update onto flash (check free space)\"}");
+            return;
+        }
+    }
+
+    /* Readback SHA-256 verification on UBIFS flash before atomic swap */
+    if (system("cd " UPDATE_FLASH_STAGE " && sha256sum -c " UPDATE_TMP_STAGE "/SHA256SUMS >/dev/null 2>&1") != 0) {
+        cleanup_update_files();
+        send_http_response(fd, 500, "Internal Server Error", "application/json",
+            "{\"ok\":false,\"error\":\"Flash readback SHA-256 check failed; nothing modified\"}");
+        return;
+    }
+
+    char updated_list[160] = "";
+    for (size_t i = 0; i < n_allowed; i++) {
+        if (!present[i]) continue;
+        char src[160], dst[160];
+        snprintf(src, sizeof(src), UPDATE_FLASH_STAGE "/%s", allowed[i].name);
+        snprintf(dst, sizeof(dst), "/mnt/dropcam/%s", allowed[i].name);
+        if (rename(src, dst) != 0) {
+            cleanup_update_files();
+            send_http_response(fd, 500, "Internal Server Error", "application/json",
+                "{\"ok\":false,\"error\":\"Atomic swap into /mnt/dropcam failed\"}");
+            return;
+        }
+        if (updated_list[0]) strncat(updated_list, ",", sizeof(updated_list) - strlen(updated_list) - 1);
+        strncat(updated_list, allowed[i].name, sizeof(updated_list) - strlen(updated_list) - 1);
+    }
+    sync();
+    cleanup_update_files();
+
+    char new_ver[48];
+    read_firmware_version(new_ver, sizeof(new_ver));
+    const char *act = needs_reboot ? "reboot" : "restart";
+    *post_action = needs_reboot ? UPDATE_POST_REBOOT : UPDATE_POST_RESTART;
+
+    fprintf(stderr, "[onvif] firmware update installed (%s): %s -> %s\n", new_ver, updated_list, act);
+
+    char json[384];
+    snprintf(json, sizeof(json),
+        "{\"ok\":true,\"version\":\"%s\",\"updated\":\"%s\",\"action\":\"%s\"}",
+        new_ver, updated_list, act);
+    send_http_response(fd, 200, "OK", "application/json", json);
+}
+
 /* ---- HTTP Client Connection Handler ---- */
 static void handle_http_client(int cfd, const struct in_addr *peer) {
     struct timeval tv = { 3, 0 };
@@ -1191,34 +1639,55 @@ static void handle_http_client(int cfd, const struct in_addr *peer) {
     char *hdr_end = NULL;
     size_t content_len = 0;
 
+    /* 1. Read HTTP headers first (before buffering large bodies such as /update) */
     while (total + 1 < sizeof(req)) {
         ssize_t n = recv(cfd, req + total, sizeof(req) - 1 - total, 0);
         if (n <= 0) break;
         total += (size_t)n;
         req[total] = '\0';
-        if (!hdr_end) {
-            hdr_end = strstr(req, "\r\n\r\n");
-            if (hdr_end) {
-                const char *cl = ci_strstr(req, "Content-Length:");
-                if (cl && cl < hdr_end) content_len = (size_t)strtoul(cl + 15, NULL, 10);
-                if (ci_strstr(req, "100-continue") && ci_strstr(req, "100-continue") < hdr_end) {
-                    const char *c100 = "HTTP/1.1 100 Continue\r\n\r\n";
-                    onvif_send_all(cfd, c100, strlen(c100));
-                }
-            }
-        }
-        if (hdr_end) {
-            size_t body_got = total - (size_t)((hdr_end + 4) - req);
-            if (body_got >= content_len) break;
-        }
+        hdr_end = strstr(req, "\r\n\r\n");
+        if (hdr_end) break;
     }
     if (total == 0 || !hdr_end) { close(cfd); return; }
 
-    *hdr_end = '\0';
-    const char *body = hdr_end + 4;
+    const char *cl = ci_strstr(req, "Content-Length:");
+    if (cl && cl < hdr_end) content_len = (size_t)strtoul(cl + 15, NULL, 10);
 
     char method[16] = "", path[256] = "";
     sscanf(req, "%15s %255s", method, path);
+
+    size_t hdr_bytes = (size_t)((hdr_end + 4) - req);
+    size_t body_got = total - hdr_bytes;
+
+    /* Fast path: streaming firmware upload on POST /update */
+    if (strcasecmp(method, "POST") == 0 && is_update_path(path)) {
+        *hdr_end = '\0';
+        update_post_action_t post_action = UPDATE_POST_NONE;
+        handle_update_upload(cfd, req, hdr_end + 4, body_got, content_len, &post_action);
+        close(cfd);
+        if (post_action == UPDATE_POST_REBOOT) {
+            if (system("(sleep 2; reboot) </dev/null >/dev/null 2>&1 &") != 0) {}
+        } else if (post_action == UPDATE_POST_RESTART) {
+            if (system("(sleep 1; killall nest_rtsp nest_onvif) </dev/null >/dev/null 2>&1 &") != 0) {}
+        }
+        return;
+    }
+
+    /* 2. Finish reading normal (SOAP/ONVIF) request body into req[] */
+    if (ci_strstr(req, "100-continue") && ci_strstr(req, "100-continue") < hdr_end) {
+        const char *c100 = "HTTP/1.1 100 Continue\r\n\r\n";
+        onvif_send_all(cfd, c100, strlen(c100));
+    }
+    while (body_got < content_len && total + 1 < sizeof(req)) {
+        ssize_t n = recv(cfd, req + total, sizeof(req) - 1 - total, 0);
+        if (n <= 0) break;
+        total += (size_t)n;
+        req[total] = '\0';
+        body_got = total - hdr_bytes;
+    }
+
+    *hdr_end = '\0';
+    const char *body = hdr_end + 4;
 
     net_info_t ni;
     get_net_info(g_iface, &ni);
@@ -1238,6 +1707,10 @@ static void handle_http_client(int cfd, const struct in_addr *peer) {
         } else {
             handle_snapshot(cfd);
         }
+    } else if (strcasecmp(method, "GET") == 0 && is_update_status_path(path)) {
+        handle_update_status(cfd, req, &ni);
+    } else if (strcasecmp(method, "GET") == 0 && is_update_path(path)) {
+        handle_update_page(cfd);
     } else if (strcasecmp(method, "POST") == 0) {
         char peer_ip[INET_ADDRSTRLEN] = "";
         inet_ntop(AF_INET, peer, peer_ip, sizeof(peer_ip));
@@ -1341,6 +1814,7 @@ int main(int argc, char **argv) {
     }
 
     setlinebuf(stderr);
+    g_start_time = time(NULL);
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
     signal(SIGPIPE, SIG_IGN);

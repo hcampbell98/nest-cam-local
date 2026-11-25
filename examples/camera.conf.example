@@ -1,0 +1,16 @@
+# Gen 1 Nest Cam Outdoor runtime settings (preserved across firmware updates).
+# Copy to /mnt/dropcam/camera.conf on the camera and restart nest_rtsp.
+
+# Sensor orientation:
+#   0 = normal (upright mount)
+#   1 = horizontal mirror
+#   2 = vertical flip
+#   3 = 180-degree rotation (upside-down mount)
+MIRROR_MODE=3
+
+# H.264 AIMD adaptive bitrate bounds in bits/sec
+MAX_BITRATE=2200000
+MIN_BITRATE=600000
+
+# Optional extra CLI flags passed to nest_rtsp (e.g. "--no-abr" or "--nv auto")
+EXTRA_RTSP_ARGS=""

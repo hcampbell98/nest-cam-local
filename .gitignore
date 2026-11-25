@@ -9,6 +9,7 @@ Dropcam-Rooter/
 nest_rtsp/nest_rtsp
 nest_onvif/nest_onvif
 dropbear/dropbear
+nest-cam-local-update-*.tar.gz
 web/node_modules/
 web/dist/
 web/public/assets/
@@ -26,6 +27,7 @@ color_test/
 
 # Credentials, keys, and device-specific configs
 onvif.conf
+camera.conf
 wpa_supplicant.conf
 audio.mode
 *.key

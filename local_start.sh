@@ -38,7 +38,15 @@ while true; do
     speaker) set -- --speaker ;;
     two-way) set -- --mic --speaker ;;
   esac
-  # Mirror both sensor axes for the upside-down mount; ABR scales 600 kbps..2.2 Mbps with Wi-Fi headroom.
-  /mnt/dropcam/nest_rtsp -w 1920 -h 1080 -b 2200000 --min-bitrate 600000 -p 554 -m 3 "$@" >/dev/null 2>&1
+  # Load user-specific orientation/bitrate overrides if present (preserved across updates).
+  MIRROR_MODE=3
+  MAX_BITRATE=2200000
+  MIN_BITRATE=600000
+  EXTRA_RTSP_ARGS=""
+  if [ -f /mnt/dropcam/camera.conf ]; then
+    . /mnt/dropcam/camera.conf
+  fi
+  # ABR scales MIN_BITRATE..MAX_BITRATE with Wi-Fi headroom.
+  /mnt/dropcam/nest_rtsp -w 1920 -h 1080 -b "$MAX_BITRATE" --min-bitrate "$MIN_BITRATE" -p 554 -m "$MIRROR_MODE" $EXTRA_RTSP_ARGS "$@" >/dev/null 2>&1
   sleep 2
 done

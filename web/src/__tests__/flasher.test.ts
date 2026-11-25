@@ -27,6 +27,7 @@ import {
 import { MockUsbTransport } from '../usb/transport';
 import {
   buildAutoreflashScript,
+  buildCameraConf,
   buildLocalStartSh,
   buildOnvifConf,
   buildOverlayEntries,
@@ -175,9 +176,14 @@ describe('payload and UBIFS autoreflash script generation', () => {
     expect(() => buildOnvifConf('admin', 'bad:pass')).toThrow();
   });
 
-  it('applies chosen mirror and bitrate settings to local_start.sh', () => {
+  it('writes mirror and bitrate settings to camera.conf and sources it in local_start.sh', () => {
+    const conf = buildCameraConf(sampleCfg);
+    expect(conf).toContain('MIRROR_MODE=0');
+    expect(conf).toContain('MAX_BITRATE=2000000');
+    expect(conf).toContain('MIN_BITRATE=600000');
     const sh = buildLocalStartSh(sampleCfg);
-    expect(sh).toContain('-b 2000000 --min-bitrate 600000 -p 554 -m 0');
+    expect(sh).toContain('. /mnt/dropcam/camera.conf');
+    expect(sh).toContain('-b "$MAX_BITRATE" --min-bitrate "$MIN_BITRATE" -p 554 -m "$MIRROR_MODE"');
   });
 
   it('builds a safe UBIFS autoreflash script with VID-offset-2048 attach, ubidetach -d 0, and hwver=5 checks', () => {
@@ -214,7 +220,9 @@ describe('payload and UBIFS autoreflash script generation', () => {
     expect(paths).toContain('payload/SHA256SUMS');
     expect(paths).toContain('payload/shadow');
     expect(paths).toContain('payload/onvif.conf');
-    expect(manifest.trim().split('\n').length).toBe(9);
+    expect(paths).toContain('payload/camera.conf');
+    expect(paths).toContain('payload/VERSION');
+    expect(manifest.trim().split('\n').length).toBe(11);
   });
 });
 

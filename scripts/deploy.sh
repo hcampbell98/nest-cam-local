@@ -60,12 +60,25 @@ chmod 755 \
   "$STAGE_DIR/nest_onvif" \
   "$STAGE_DIR/dropbear"
 
+if [ -f "$REPO_ROOT/VERSION" ]; then
+  cp "$REPO_ROOT/VERSION" "$STAGE_DIR/VERSION"
+  chmod 644 "$STAGE_DIR/VERSION"
+fi
+
 if [ -f "$REPO_ROOT/onvif.conf" ]; then
   echo "[+] Including local onvif.conf"
   cp "$REPO_ROOT/onvif.conf" "$STAGE_DIR/onvif.conf"
   chmod 600 "$STAGE_DIR/onvif.conf"
 else
   echo "[i] Local onvif.conf not found; keeping existing /mnt/dropcam/onvif.conf on camera."
+fi
+
+if [ -f "$REPO_ROOT/camera.conf" ]; then
+  echo "[+] Including local camera.conf"
+  cp "$REPO_ROOT/camera.conf" "$STAGE_DIR/camera.conf"
+  chmod 644 "$STAGE_DIR/camera.conf"
+else
+  echo "[i] Local camera.conf not found; keeping existing /mnt/dropcam/camera.conf on camera."
 fi
 
 if [ -f "$REPO_ROOT/audio.mode" ]; then
@@ -83,7 +96,7 @@ tar -C "$STAGE_DIR" -cf - . | ssh "$TARGET" '
   rm -rf "$tmp"
   mkdir -p "$tmp"
   tar -C "$tmp" -xf -
-  for f in ie_auto.sh local_start.sh nest_rtsp nest_onvif dropbear onvif.conf audio.mode; do
+  for f in ie_auto.sh local_start.sh nest_rtsp nest_onvif dropbear VERSION onvif.conf camera.conf audio.mode; do
     if [ -f "$tmp/$f" ]; then
       mv -f "$tmp/$f" "/mnt/dropcam/$f"
     fi

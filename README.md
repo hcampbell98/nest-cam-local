@@ -287,16 +287,21 @@ Create your local camera configuration files from the templates in `examples/`.
 
    `Dropcam-Rooter` already wrote `/mnt/dropcam/wpa_supplicant.conf` on the camera during Step 1. If you ever need to recreate or change your Wi-Fi network, see `examples/wpa_supplicant.conf.example`.
 
-4. **Check camera orientation in `local_start.sh`**
+4. **Set camera orientation and bitrate (`camera.conf`)**
 
-   By default, `local_start.sh` passes `-m 3` (180-degree flip: horizontal + vertical mirror) for an upside-down mount. If your camera is mounted right-side up, change `-m 3` to `-m 0` in `local_start.sh` before deploying:
+   `local_start.sh` sources `/mnt/dropcam/camera.conf` if present, keeping your mount orientation and bitrate settings separate so future firmware updates never overwrite them. Copy the example template if you want to customize from the defaults (`MIRROR_MODE=3`, `MAX_BITRATE=2200000`, `MIN_BITRATE=600000`):
 
-   | `-m` value | Orientation |
+   ```bash
+   cp examples/camera.conf.example camera.conf
+   # Edit camera.conf -> e.g. set MIRROR_MODE=0 for an upright mount
+   ```
+
+   | `MIRROR_MODE` | Orientation |
    | --- | --- |
    | `0` | Normal (upright mount) |
    | `1` | Horizontal mirror |
    | `2` | Vertical flip |
-   | `3` | 180-degree rotation (upside-down mount) |
+   | `3` | 180-degree rotation (upside-down mount, default) |
 
 ---
 
@@ -368,6 +373,7 @@ Set a **static DHCP lease** (IP reservation) for your camera's Wi-Fi MAC address
 | --- | --- |
 | RTSP main stream | `rtsp://<user>:<pass>@<CAMERA_IP>:554/stream1` |
 | Live JPEG snapshot | `http://<CAMERA_IP>/snapshot.jpg` (HTTP Digest or Basic auth) |
+| Local Firmware Update UI | `http://<CAMERA_IP>/update` (HTTP Digest or Basic auth) |
 | ONVIF Device Service | `http://<CAMERA_IP>/onvif/device_service` |
 | ONVIF Events Service | `http://<CAMERA_IP>/onvif/events_service` |
 | WS-Discovery | UDP multicast `239.255.255.250:3702` |
@@ -439,6 +445,26 @@ The RTSP server uses mono G.711 u-law (`PCMU`, 8 kHz) for both the microphone an
 The camera analyzes its own preview frames on a 48x32 cell grid, compensates for exposure changes, pauses briefly when the IR-cut filter switches, and clears motion after 2.5 seconds without movement. Events are exposed via `/onvif/events_service` (`CreatePullPointSubscription` + `PullMessages`) as both:
 - `tns1:RuleEngine/CellMotionDetector/Motion` (`IsMotion`)
 - `tns1:VideoSource/MotionAlarm` (`State`)
+
+---
+
+## Updating a Flashed Camera (100% Local)
+
+Once flashed, you never need to open the camera or press the DFU button again for software updates. The camera stays completely offline—updates are uploaded directly from your browser over your local network:
+
+1. Download a `nest-cam-local-update-*.tar.gz` release bundle (or build one locally with `./scripts/build-update-bundle.sh`).
+2. Open **`http://<CAMERA_IP>/update`** in your browser and sign in with your `onvif.conf` username and password.
+3. Select the `.tar.gz` bundle and click **Upload & Install Update**.
+
+The camera verifies the bundle's `SHA256SUMS` manifest, checks ARM32 ELF headers on binaries, stages and readback-verifies every file on `/mnt/dropcam` before atomically swapping them into place, and restarts services (or reboots if boot scripts/Dropbear changed). Your `wpa_supplicant.conf`, `onvif.conf`, `camera.conf`, `audio.mode`, `shadow`, and factory calibration files are never modified.
+
+You can also upload a bundle from the command line:
+
+```bash
+curl -u admin:<PASSWORD> --digest \
+  --data-binary @nest-cam-local-update-1.1.0-local.tar.gz \
+  "http://<CAMERA_IP>/update"
+```
 
 ---
 

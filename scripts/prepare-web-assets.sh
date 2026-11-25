@@ -20,6 +20,7 @@ declare -A ASSETS=(
   ["nest_rtsp"]="$REPO_ROOT/nest_rtsp/nest_rtsp"
   ["nest_onvif"]="$REPO_ROOT/nest_onvif/nest_onvif"
   ["dropbear"]="$REPO_ROOT/dropbear/dropbear"
+  ["VERSION"]="$REPO_ROOT/VERSION"
   ["zImage"]="$GP_DIR/zImage"
 )
 
@@ -81,7 +82,7 @@ gz_path = os.path.join(out_dir, "initrd_base.bin")
 with open(gz_path, "wb") as f:
     f.write(gzip.compress(bytes(cleaned), compresslevel=9, mtime=0))
 
-files = ["ie_auto.sh", "local_start.sh", "nest_rtsp", "nest_onvif", "dropbear", "zImage", "initrd_base.bin"]
+files = ["ie_auto.sh", "local_start.sh", "nest_rtsp", "nest_onvif", "dropbear", "VERSION", "zImage", "initrd_base.bin"]
 manifest = {"version": 2, "files": {}}
 for name in files:
     p = os.path.join(out_dir, name)

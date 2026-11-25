@@ -65,7 +65,7 @@ export async function loadStagedAssets(
   const manifest = await fetchManifest(baseUrl);
   onLog?.('Loading and verifying staged ARMv6 binaries and RAM kernel...');
 
-  const [ieAutoSh, nestRtsp, nestOnvif, dropbear, zImage, initrdGzip] =
+  const [ieAutoSh, nestRtsp, nestOnvif, dropbear, zImage, initrdGzip, version] =
     await Promise.all([
       fetchAndVerify(baseUrl, 'ie_auto.sh', manifest.files['ie_auto.sh']),
       fetchAndVerify(baseUrl, 'nest_rtsp', manifest.files['nest_rtsp']),
@@ -73,8 +73,11 @@ export async function loadStagedAssets(
       fetchAndVerify(baseUrl, 'dropbear', manifest.files['dropbear']),
       fetchAndVerify(baseUrl, 'zImage', manifest.files['zImage']),
       fetchAndVerify(baseUrl, 'initrd_base.bin', manifest.files['initrd_base.bin']),
+      manifest.files['VERSION']
+        ? fetchAndVerify(baseUrl, 'VERSION', manifest.files['VERSION'])
+        : Promise.resolve(undefined),
     ]);
 
-  onLog?.('All 6 staged camera assets verified against manifest SHA-256.');
-  return { ieAutoSh, nestRtsp, nestOnvif, dropbear, zImage, initrdGzip };
+  onLog?.('All staged camera assets verified against manifest SHA-256.');
+  return { ieAutoSh, nestRtsp, nestOnvif, dropbear, zImage, initrdGzip, version };
 }

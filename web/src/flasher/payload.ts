@@ -27,6 +27,7 @@ export interface StagedRepoAssets {
   dropbear: Uint8Array;
   zImage: Uint8Array;
   initrdGzip: Uint8Array;
+  version?: Uint8Array;
 }
 
 const ENC = new TextEncoder();
@@ -63,10 +64,28 @@ export function buildOnvifConf(user: string, password: string): string {
   return `${user}:${password}\n`;
 }
 
-export function buildLocalStartSh(config: CameraConfig): string {
+export function buildCameraConf(config: CameraConfig): string {
   const maxBps = Math.max(600, Math.min(4000, Math.trunc(config.maxBitrateKbps))) * 1000;
   const minBps = Math.max(300, Math.min(maxBps / 1000, Math.trunc(config.minBitrateKbps))) * 1000;
   const mirror = config.mirrorMode;
+  return [
+    '# Gen 1 Nest Cam Outdoor runtime settings (preserved across firmware updates).',
+    `MIRROR_MODE=${mirror}`,
+    `MAX_BITRATE=${maxBps}`,
+    `MIN_BITRATE=${minBps}`,
+    'EXTRA_RTSP_ARGS=""',
+    '',
+  ].join('\n');
+}
+
+export function buildLocalStartSh(config?: CameraConfig): string {
+  const maxBps = config
+    ? Math.max(600, Math.min(4000, Math.trunc(config.maxBitrateKbps))) * 1000
+    : 2200000;
+  const minBps = config
+    ? Math.max(300, Math.min(maxBps / 1000, Math.trunc(config.minBitrateKbps))) * 1000
+    : 600000;
+  const mirror = config ? config.mirrorMode : 3;
   return [
     '#!/bin/sh',
     'export PATH=/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin',
@@ -107,7 +126,14 @@ export function buildLocalStartSh(config: CameraConfig): string {
     '    speaker) set -- --speaker ;;',
     '    two-way) set -- --mic --speaker ;;',
     '  esac',
-    `  /mnt/dropcam/nest_rtsp -w 1920 -h 1080 -b ${maxBps} --min-bitrate ${minBps} -p 554 -m ${mirror} "$@" >/dev/null 2>&1`,
+    `  MIRROR_MODE=${mirror}`,
+    `  MAX_BITRATE=${maxBps}`,
+    `  MIN_BITRATE=${minBps}`,
+    '  EXTRA_RTSP_ARGS=""',
+    '  if [ -f /mnt/dropcam/camera.conf ]; then',
+    '    . /mnt/dropcam/camera.conf',
+    '  fi',
+    '  /mnt/dropcam/nest_rtsp -w 1920 -h 1080 -b "$MAX_BITRATE" --min-bitrate "$MIN_BITRATE" -p 554 -m "$MIRROR_MODE" $EXTRA_RTSP_ARGS "$@" >/dev/null 2>&1',
     '  sleep 2',
     'done',
     '',
@@ -161,17 +187,19 @@ cp "$PAYLOAD/nest_onvif" "$STAGE/nest_onvif" || fail "Copy nest_onvif failed."
 cp "$PAYLOAD/dropbear" "$STAGE/dropbear" || fail "Copy dropbear failed."
 cp "$PAYLOAD/wpa_supplicant.conf" "$STAGE/wpa_supplicant.conf" || fail "Copy wpa_supplicant.conf failed."
 cp "$PAYLOAD/onvif.conf" "$STAGE/onvif.conf" || fail "Copy onvif.conf failed."
+cp "$PAYLOAD/camera.conf" "$STAGE/camera.conf" || fail "Copy camera.conf failed."
 cp "$PAYLOAD/audio.mode" "$STAGE/audio.mode" || fail "Copy audio.mode failed."
+cp "$PAYLOAD/VERSION" "$STAGE/VERSION" || fail "Copy VERSION failed."
 cp "$PAYLOAD/shadow" "$STAGE/shadow" || fail "Copy shadow failed."
 
 chmod 755 "$STAGE/ie_auto.sh" "$STAGE/local_start.sh" "$STAGE/nest_rtsp" "$STAGE/nest_onvif" "$STAGE/dropbear"
 chmod 600 "$STAGE/onvif.conf" "$STAGE/shadow" "$STAGE/wpa_supplicant.conf"
-chmod 644 "$STAGE/audio.mode"
+chmod 644 "$STAGE/audio.mode" "$STAGE/camera.conf" "$STAGE/VERSION"
 
 # Re-verify written copies on flash before swapping into place
 (cd "$STAGE" && sha256sum -c "$PAYLOAD/SHA256SUMS") >> "$LOG" 2>&1 || fail "Flash readback SHA-256 check failed."
 
-for f in ie_auto.sh local_start.sh nest_rtsp nest_onvif dropbear wpa_supplicant.conf onvif.conf audio.mode shadow; do
+for f in ie_auto.sh local_start.sh nest_rtsp nest_onvif dropbear wpa_supplicant.conf onvif.conf camera.conf audio.mode VERSION shadow; do
   mv -f "$STAGE/$f" "$MNT/$f" || fail "Atomic move failed for $f."
 done
 rm -rf "$STAGE"
@@ -273,7 +301,9 @@ export async function buildOverlayEntries(
 ): Promise<{ entries: CpioEntry[]; manifest: string }> {
   const wpaConf = ENC.encode(buildWpaSupplicantConf(config.wifiSsid, config.wifiPassword));
   const onvifConf = ENC.encode(buildOnvifConf(config.onvifUser, config.onvifPassword));
+  const cameraConf = ENC.encode(buildCameraConf(config));
   const audioMode = ENC.encode(`${config.audioMode}\n`);
+  const versionData = assets.version ?? ENC.encode('1.1.0-local\n');
   const localStartSh = ENC.encode(buildLocalStartSh(config));
   const shadowFile = ENC.encode(await generateShadowFile(config.rootPassword));
   const autoreflashSh = ENC.encode(
@@ -288,7 +318,9 @@ export async function buildOverlayEntries(
     { name: 'dropbear', data: assets.dropbear, mode: 0o100755 },
     { name: 'wpa_supplicant.conf', data: wpaConf, mode: 0o100600 },
     { name: 'onvif.conf', data: onvifConf, mode: 0o100600 },
+    { name: 'camera.conf', data: cameraConf, mode: 0o100644 },
     { name: 'audio.mode', data: audioMode, mode: 0o100644 },
+    { name: 'VERSION', data: versionData, mode: 0o100644 },
     { name: 'shadow', data: shadowFile, mode: 0o100600 },
   ];
 
