@@ -25,6 +25,8 @@ Replace `<CAMERA_USER>`, `<CAMERA_PASS>`, and `<CAMERA_IP>` with the credentials
 
 `nest_onvif` and `nest_rtsp` are built specifically to integrate cleanly with UniFi Protect third-party ONVIF camera support.
 
+![Gen 1 Nest Cam Outdoor adopted in UniFi Protect showing 1080p at 30 fps](images/unifi-protect.png)
+
 ### Adoption Steps
 
 1. Make sure the camera and your UniFi Protect console (UDM/UNVR/Cloud Key) are on the same VLAN, or that mDNS/WS-Discovery and TCP ports `80` and `554` are permitted between VLANs.

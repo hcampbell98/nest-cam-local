@@ -378,6 +378,8 @@ Set a **static DHCP lease** (IP reservation) for your camera's Wi-Fi MAC address
 2. The camera appears automatically via WS-Discovery (or click **Advanced Adoption** and enter `<CAMERA_IP>` on port `80` with your `onvif.conf` username and password).
 3. Once adopted, live view, continuous/motion recording (via ONVIF PullPoint events), snapshots, and night vision mode (`Auto` / `Always On` / `Off` via ONVIF Imaging `IrCutFilter`) work natively.
 
+![Gen 1 Nest Cam Outdoor adopted in UniFi Protect showing 1080p at 30 fps](docs/images/unifi-protect.png)
+
 For detailed walkthroughs covering **UniFi Protect**, **Frigate**, **Home Assistant**, and **go2rtc** (including two-way audio backchannel), see [docs/NVR_SETUP.md](docs/NVR_SETUP.md) and the sample configs in [examples/](examples/).
 
 ---
